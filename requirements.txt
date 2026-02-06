@@ -1,0 +1,24 @@
+# FastAPI
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+
+# PDF Generation
+weasyprint==60.2
+
+# HTTP Client (for OpenRouter)
+httpx==0.26.0
+
+# Google APIs (Gmail)
+google-api-python-client==2.116.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+
+# Pydantic
+pydantic==2.5.3
+
+# Utils
+python-dotenv==1.0.0

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice Tracker - Create Invoice</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .chat-message {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+        }
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #9ca3af;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <i class="fas fa-file-invoice-dollar text-blue-600 text-2xl mr-3"></i>
+                    <span class="text-xl font-semibold text-gray-900">Invoice Tracker</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/" class="text-gray-600 hover:text-blue-600">Dashboard</a>
+                    <a href="/chat" class="text-blue-600 font-medium">+ New Invoice</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Chat Interface -->
+    <main class="flex-1 max-w-3xl mx-auto w-full px-4 py-8 flex flex-col">
+        <div class="bg-white rounded-lg shadow-lg flex-1 flex flex-col overflow-hidden">
+            <!-- Chat Header -->
+            <div class="border-b px-6 py-4">
+                <h2 class="text-lg font-semibold text-gray-900">Create New Invoice</h2>
+                <p class="text-sm text-gray-500">Chat with AI to create your invoice</p>
+            </div>
+
+            <!-- Chat Messages -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-4">
+                <!-- Initial AI message -->
+                <div class="chat-message flex items-start">
+                    <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-robot text-white text-sm"></i>
+                    </div>
+                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-md">
+                        <p class="text-gray-800">Hello! I'll help you create an invoice. Just tell me:</p>
+                        <ul class="text-gray-600 text-sm mt-2 space-y-1">
+                            <li>- Client name (Bauceram, Clinker, Laufenberg)</li>
+                            <li>- Amount (in EUR)</li>
+                            <li>- Description of work</li>
+                            <li>- Work period (optional)</li>
+                        </ul>
+                        <p class="text-gray-800 mt-2">For example: "Create invoice for Bauceram, 30k EUR, construction work January"</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="border-t px-4 py-4">
+                <form id="chat-form" class="flex items-center space-x-3">
+                    <input
+                        type="text"
+                        id="chat-input"
+                        placeholder="Type your message..."
+                        class="flex-1 border rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        autocomplete="off"
+                    >
+                    <button type="submit" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="mt-4 flex justify-center space-x-4">
+            <button id="clear-btn" class="text-gray-500 hover:text-gray-700">
+                <i class="fas fa-trash mr-2"></i>Clear Chat
+            </button>
+        </div>
+    </main>
+
+    <!-- Confirmation Modal -->
+    <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4">
+            <div class="p-6">
+                <div class="flex items-center mb-4">
+                    <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                        <i class="fas fa-check text-green-600 text-xl"></i>
+                    </div>
+                    <h3 class="ml-4 text-lg font-semibold">Confirm Invoice Creation</h3>
+                </div>
+                <div id="invoice-summary" class="bg-gray-50 rounded-lg p-4 mb-4">
+                    <!-- Filled by JS -->
+                </div>
+                <div class="flex justify-end space-x-3">
+                    <button onclick="closeConfirmModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
+                    <button id="confirm-create-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                        <i class="fas fa-check mr-2"></i>Create Invoice
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div id="success-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4">
+            <div class="p-6 text-center">
+                <div class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-check text-green-600 text-3xl"></i>
+                </div>
+                <h3 class="text-xl font-semibold mb-2">Invoice Created!</h3>
+                <p id="success-message" class="text-gray-600 mb-4"></p>
+                <div class="flex justify-center space-x-3">
+                    <a href="/" class="px-4 py-2 border rounded hover:bg-gray-50">Go to Dashboard</a>
+                    <button id="preview-created-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                        <i class="fas fa-file-pdf mr-2"></i>Preview PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        let conversationId = null;
+        let extractedData = null;
+        let createdInvoiceId = null;
+
+        // Elements
+        const chatForm = document.getElementById('chat-form');
+        const chatInput = document.getElementById('chat-input');
+        const chatMessages = document.getElementById('chat-messages');
+        const clearBtn = document.getElementById('clear-btn');
+        const confirmModal = document.getElementById('confirm-modal');
+        const successModal = document.getElementById('success-modal');
+        const confirmCreateBtn = document.getElementById('confirm-create-btn');
+        const previewCreatedBtn = document.getElementById('preview-created-btn');
+
+        // Add message to chat
+        function addMessage(content, isUser = false) {
+            const div = document.createElement('div');
+            div.className = 'chat-message flex items-start' + (isUser ? ' justify-end' : '');
+
+            if (isUser) {
+                div.innerHTML = `
+                    <div class="bg-blue-600 text-white rounded-lg px-4 py-3 max-w-md">
+                        <p>${content}</p>
+                    </div>
+                    <div class="ml-3 w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-user text-gray-600 text-sm"></i>
+                    </div>
+                `;
+            } else {
+                div.innerHTML = `
+                    <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-robot text-white text-sm"></i>
+                    </div>
+                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-md">
+                        <p class="text-gray-800">${content}</p>
+                    </div>
+                `;
+            }
+
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Add typing indicator
+        function addTypingIndicator() {
+            const div = document.createElement('div');
+            div.id = 'typing-indicator';
+            div.className = 'chat-message flex items-start';
+            div.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-robot text-white text-sm"></i>
+                </div>
+                <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3">
+                    <div class="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                </div>
+            `;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        // Send chat message
+        async function sendMessage(message) {
+            addMessage(message, true);
+            chatInput.value = '';
+            addTypingIndicator();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/chat/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        conversation_id: conversationId
+                    })
+                });
+
+                const data = await response.json();
+                removeTypingIndicator();
+
+                conversationId = data.conversation_id;
+                addMessage(data.response);
+
+                // Check if ready to create
+                if (data.needs_confirmation && data.extracted_data) {
+                    extractedData = data.extracted_data;
+                    showConfirmModal(extractedData);
+                }
+            } catch (error) {
+                removeTypingIndicator();
+                addMessage('Sorry, there was an error. Please try again.');
+                console.error('Chat error:', error);
+            }
+        }
+
+        // Show confirmation modal
+        function showConfirmModal(data) {
+            const summary = document.getElementById('invoice-summary');
+            summary.innerHTML = `
+                <div class="space-y-2">
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Client:</span>
+                        <span class="font-medium">${data.client_name || '-'}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Amount:</span>
+                        <span class="font-medium">${data.currency || 'EUR'} ${(data.amount || 0).toLocaleString()}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Description:</span>
+                        <span class="font-medium">${data.description || '-'}</span>
+                    </div>
+                    ${data.work_dates ? `
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Work Period:</span>
+                        <span class="font-medium">${data.work_dates}</span>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+            confirmModal.classList.remove('hidden');
+            confirmModal.classList.add('flex');
+        }
+
+        function closeConfirmModal() {
+            confirmModal.classList.add('hidden');
+            confirmModal.classList.remove('flex');
+        }
+
+        // Confirm and create invoice
+        confirmCreateBtn.addEventListener('click', async () => {
+            confirmCreateBtn.disabled = true;
+            confirmCreateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Creating...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/chat/confirm?conversation_id=${conversationId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+                closeConfirmModal();
+
+                if (data.success) {
+                    createdInvoiceId = data.invoice_id;
+                    document.getElementById('success-message').textContent =
+                        `Invoice ${data.invoice_number} has been created.`;
+                    successModal.classList.remove('hidden');
+                    successModal.classList.add('flex');
+
+                    // Clear conversation
+                    conversationId = null;
+                    extractedData = null;
+                } else {
+                    addMessage(`Error: ${data.detail || 'Failed to create invoice'}`);
+                }
+            } catch (error) {
+                closeConfirmModal();
+                addMessage('Error creating invoice. Please try again.');
+                console.error('Create error:', error);
+            }
+
+            confirmCreateBtn.disabled = false;
+            confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Create Invoice';
+        });
+
+        // Preview created invoice
+        previewCreatedBtn.addEventListener('click', () => {
+            if (createdInvoiceId) {
+                window.open(`${API_BASE}/api/invoices/${createdInvoiceId}/preview`, '_blank');
+            }
+        });
+
+        // Form submit
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const message = chatInput.value.trim();
+            if (message) {
+                sendMessage(message);
+            }
+        });
+
+        // Clear chat
+        clearBtn.addEventListener('click', async () => {
+            if (conversationId) {
+                await fetch(`${API_BASE}/api/chat/${conversationId}`, { method: 'DELETE' });
+            }
+            conversationId = null;
+            extractedData = null;
+            chatMessages.innerHTML = `
+                <div class="chat-message flex items-start">
+                    <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-robot text-white text-sm"></i>
+                    </div>
+                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-md">
+                        <p class="text-gray-800">Hello! I'll help you create an invoice. Just tell me:</p>
+                        <ul class="text-gray-600 text-sm mt-2 space-y-1">
+                            <li>- Client name (Bauceram, Clinker, Laufenberg)</li>
+                            <li>- Amount (in EUR)</li>
+                            <li>- Description of work</li>
+                            <li>- Work period (optional)</li>
+                        </ul>
+                        <p class="text-gray-800 mt-2">For example: "Create invoice for Bauceram, 30k EUR, construction work January"</p>
+                    </div>
+                </div>
+            `;
+        });
+
+        // Focus input on load
+        chatInput.focus();
+    </script>
+</body>
+</html>
