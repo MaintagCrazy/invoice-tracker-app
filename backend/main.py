@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
-from routers import invoices_router, clients_router, chat_router, email_router
+from routers import invoices_router, clients_router, chat_router, email_router, payments_router
 from config import config
 
 # Configure logging
@@ -59,6 +59,7 @@ app.include_router(invoices_router)
 app.include_router(clients_router)
 app.include_router(chat_router)
 app.include_router(email_router)
+app.include_router(payments_router)
 
 # Serve static files (frontend)
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
@@ -92,6 +93,15 @@ async def chat_page():
     if os.path.exists(chat_path):
         return FileResponse(chat_path)
     return {"error": "Chat page not found"}
+
+
+@app.get("/client")
+async def client_page():
+    """Serve client detail page"""
+    client_path = os.path.join(frontend_path, "client.html")
+    if os.path.exists(client_path):
+        return FileResponse(client_path)
+    return {"error": "Client page not found"}
 
 
 @app.get("/health")

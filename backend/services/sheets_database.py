@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 SHEET_ID = "1xETHFJZO29qJj_UlyTqB29CRyOp7UFi49oEOvmfd084"
 DATABASE_TAB = "Database"
 CLIENTS_TAB = "Clients"
+PAYMENTS_TAB = "Payments"
 
 # Client data (hardcoded for now, can move to sheet later)
 DEFAULT_CLIENTS = {
@@ -97,11 +98,28 @@ class SheetsDatabaseService:
             self.gc = gspread.authorize(credentials)
             self.sheet = self.gc.open_by_key(SHEET_ID)
             self.db_worksheet = self.sheet.worksheet(DATABASE_TAB)
+            self._init_payments_worksheet()
             logger.info(f"Connected to Google Sheet: {SHEET_ID}")
 
         except Exception as e:
             logger.error(f"Failed to connect to Google Sheets: {e}")
             raise
+
+    def _init_payments_worksheet(self):
+        """Initialize Payments worksheet (create if not exists)"""
+        try:
+            self.payments_worksheet = self.sheet.worksheet(PAYMENTS_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            # Create Payments tab with headers
+            self.payments_worksheet = self.sheet.add_worksheet(
+                title=PAYMENTS_TAB, rows=1000, cols=10
+            )
+            headers = [
+                "Payment ID", "Invoice #", "Client", "Amount", "Currency",
+                "Date", "Method", "Notes", "Created At"
+            ]
+            self.payments_worksheet.append_row(headers)
+            logger.info("Created Payments worksheet")
 
     # ============ CLIENTS ============
 
@@ -127,10 +145,14 @@ class SheetsDatabaseService:
 
     # ============ INVOICES ============
 
-    def get_invoices(self, status: Optional[str] = None) -> List[Dict]:
-        """Get all invoices from sheet"""
+    def get_invoices(self, status: Optional[str] = None, client_id: Optional[int] = None) -> List[Dict]:
+        """Get all invoices from sheet with payment status"""
         try:
             all_data = self.db_worksheet.get_all_records()
+
+            # Get all payments for calculating amounts
+            payments_by_invoice = self._get_payments_by_invoice()
+
             invoices = []
 
             for row in all_data:
@@ -147,14 +169,33 @@ class SheetsDatabaseService:
                     "email": None
                 }
 
+                file_number = int(row.get('File #', 0))
+                amount = float(row.get('Amount', 0)) if row.get('Amount') else 0
+
+                # Calculate payment status
+                invoice_payments = payments_by_invoice.get(file_number, [])
+                amount_paid = sum(p['amount'] for p in invoice_payments)
+                amount_due = max(0, amount - amount_paid)
+
+                # Determine payment status
+                if amount_paid >= amount:
+                    payment_status = "paid"
+                elif amount_paid > 0:
+                    payment_status = "partial"
+                else:
+                    payment_status = "unpaid"
+
                 invoice = {
-                    "id": int(row.get('File #', 0)),
-                    "file_number": int(row.get('File #', 0)),
+                    "id": file_number,
+                    "file_number": file_number,
                     "invoice_number": row.get('Invoice Number', ''),
                     "client_id": client["id"],
                     "client": client,
                     "description": row.get('Description', ''),
-                    "amount": float(row.get('Amount', 0)) if row.get('Amount') else 0,
+                    "amount": amount,
+                    "amount_paid": amount_paid,
+                    "amount_due": amount_due,
+                    "payment_status": payment_status,
                     "currency": row.get('Currency', 'EUR'),
                     "issue_date": row.get('Issue Date', ''),
                     "due_date": row.get('Due Date', ''),
@@ -173,6 +214,10 @@ class SheetsDatabaseService:
             # Filter by status if provided
             if status:
                 invoices = [i for i in invoices if i['status'] == status]
+
+            # Filter by client_id if provided
+            if client_id:
+                invoices = [i for i in invoices if i['client_id'] == client_id]
 
             return invoices
 
@@ -312,6 +357,8 @@ class SheetsDatabaseService:
         sent = sum(1 for i in invoices if i['status'] == 'sent')
         paid = sum(1 for i in invoices if i['status'] == 'paid')
         total_amount = sum(i['amount'] for i in invoices)
+        total_paid = sum(i['amount_paid'] for i in invoices)
+        total_due = sum(i['amount_due'] for i in invoices)
 
         # By client
         by_client = {}
@@ -325,8 +372,218 @@ class SheetsDatabaseService:
             "sent_count": sent,
             "paid_count": paid,
             "total_amount": total_amount,
+            "total_paid": total_paid,
+            "total_due": total_due,
             "total_by_client": by_client
         }
+
+    # ============ PAYMENTS ============
+
+    def _get_payments_by_invoice(self) -> Dict[int, List[Dict]]:
+        """Get all payments grouped by invoice file number"""
+        try:
+            all_data = self.payments_worksheet.get_all_records()
+            payments_by_invoice = {}
+
+            for row in all_data:
+                if not row.get('Payment ID'):
+                    continue
+
+                invoice_num = int(row.get('Invoice #', 0))
+                if invoice_num not in payments_by_invoice:
+                    payments_by_invoice[invoice_num] = []
+
+                payment = {
+                    "id": int(row.get('Payment ID', 0)),
+                    "invoice_id": invoice_num,
+                    "client": row.get('Client', ''),
+                    "amount": float(row.get('Amount', 0)) if row.get('Amount') else 0,
+                    "currency": row.get('Currency', 'EUR'),
+                    "date": row.get('Date', ''),
+                    "method": row.get('Method', ''),
+                    "notes": row.get('Notes', ''),
+                    "created_at": row.get('Created At', '')
+                }
+                payments_by_invoice[invoice_num].append(payment)
+
+            return payments_by_invoice
+        except Exception as e:
+            logger.error(f"Error fetching payments by invoice: {e}")
+            return {}
+
+    def get_payments(
+        self,
+        client_id: Optional[int] = None,
+        invoice_id: Optional[int] = None
+    ) -> List[Dict]:
+        """Get all payments with optional filters"""
+        try:
+            all_data = self.payments_worksheet.get_all_records()
+            payments = []
+
+            for row in all_data:
+                if not row.get('Payment ID'):
+                    continue
+
+                payment = {
+                    "id": int(row.get('Payment ID', 0)),
+                    "invoice_id": int(row.get('Invoice #', 0)),
+                    "client": row.get('Client', ''),
+                    "amount": float(row.get('Amount', 0)) if row.get('Amount') else 0,
+                    "currency": row.get('Currency', 'EUR'),
+                    "date": row.get('Date', ''),
+                    "method": row.get('Method', ''),
+                    "notes": row.get('Notes', ''),
+                    "created_at": row.get('Created At', '')
+                }
+                payments.append(payment)
+
+            # Sort by date descending
+            payments.sort(key=lambda x: x['id'], reverse=True)
+
+            # Filter by invoice_id if provided
+            if invoice_id:
+                payments = [p for p in payments if p['invoice_id'] == invoice_id]
+
+            # Filter by client_id if provided
+            if client_id:
+                client = self.get_client(client_id)
+                if client:
+                    client_name = client['name']
+                    payments = [p for p in payments if p['client'] == client_name]
+
+            return payments
+
+        except Exception as e:
+            logger.error(f"Error fetching payments: {e}")
+            return []
+
+    def get_payment(self, payment_id: int) -> Optional[Dict]:
+        """Get single payment by ID"""
+        payments = self.get_payments()
+        for p in payments:
+            if p['id'] == payment_id:
+                return p
+        return None
+
+    def get_next_payment_id(self) -> int:
+        """Get next available payment ID"""
+        payments = self.get_payments()
+        if not payments:
+            return 1
+        return max(p['id'] for p in payments) + 1
+
+    def create_payment(
+        self,
+        invoice_id: int,
+        amount: float,
+        currency: str = "EUR",
+        date: Optional[str] = None,
+        method: Optional[str] = None,
+        notes: Optional[str] = None
+    ) -> Dict:
+        """Create new payment in sheet"""
+        try:
+            # Get invoice to get client name
+            invoice = self.get_invoice(invoice_id)
+            if not invoice:
+                raise ValueError(f"Invoice {invoice_id} not found")
+
+            # Validate payment amount
+            if amount > invoice['amount_due']:
+                raise ValueError(
+                    f"Payment amount ({amount}) exceeds remaining due ({invoice['amount_due']})"
+                )
+
+            payment_id = self.get_next_payment_id()
+            client_name = invoice['client']['name'] if invoice['client'] else ''
+
+            # Default date to today
+            now = datetime.now()
+            if not date:
+                date = now.strftime("%d.%m.%Y")
+
+            # Prepare row data matching sheet columns:
+            # Payment ID | Invoice # | Client | Amount | Currency | Date | Method | Notes | Created At
+            row_data = [
+                payment_id,
+                invoice_id,
+                client_name,
+                amount,
+                currency,
+                date,
+                method or "",
+                notes or "",
+                now.isoformat()
+            ]
+
+            # Append to sheet
+            self.payments_worksheet.append_row(row_data)
+            logger.info(f"Created payment {payment_id} for invoice {invoice_id}")
+
+            return {
+                "id": payment_id,
+                "invoice_id": invoice_id,
+                "client": client_name,
+                "amount": amount,
+                "currency": currency,
+                "date": date,
+                "method": method or "",
+                "notes": notes or "",
+                "created_at": now.isoformat()
+            }
+
+        except Exception as e:
+            logger.error(f"Error creating payment: {e}")
+            raise
+
+    def delete_payment(self, payment_id: int) -> bool:
+        """Delete payment from sheet"""
+        try:
+            all_data = self.payments_worksheet.get_all_records()
+            for idx, row in enumerate(all_data):
+                if int(row.get('Payment ID', 0)) == payment_id:
+                    # Row index is idx + 2 (1 for header, 1 for 0-index)
+                    row_num = idx + 2
+                    self.payments_worksheet.delete_rows(row_num)
+                    logger.info(f"Deleted payment {payment_id}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting payment: {e}")
+            return False
+
+    def get_client_summary(self, client_id: int) -> Optional[Dict]:
+        """Get client summary with invoice and payment totals"""
+        client = self.get_client(client_id)
+        if not client:
+            return None
+
+        # Get all invoices for this client
+        invoices = self.get_invoices(client_id=client_id)
+
+        # Get all payments for this client
+        payments = self.get_payments(client_id=client_id)
+
+        total_invoiced = sum(i['amount'] for i in invoices)
+        total_paid = sum(p['amount'] for p in payments)
+        total_due = total_invoiced - total_paid
+
+        return {
+            "client": client,
+            "total_invoiced": total_invoiced,
+            "total_paid": total_paid,
+            "total_due": total_due,
+            "invoice_count": len(invoices),
+            "payment_count": len(payments),
+            "invoices": invoices,
+            "payments": payments
+        }
+
+    def get_unpaid_invoices_for_client(self, client_id: int) -> List[Dict]:
+        """Get unpaid or partially paid invoices for a client"""
+        invoices = self.get_invoices(client_id=client_id)
+        return [i for i in invoices if i['amount_due'] > 0]
 
 
 # Singleton

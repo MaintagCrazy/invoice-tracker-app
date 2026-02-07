@@ -1,30 +1,28 @@
 """
-AI Chat endpoint for invoice creation
+AI Chat endpoint for invoice and payment creation
 """
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 
-from models.database import get_db, Client
 from models.schemas import ChatMessage, ChatResponse
 from services.ai_service import get_ai_service
-from services.invoice_service import InvoiceService, ClientService
+from services.sheets_database import get_sheets_db
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(message: ChatMessage, db: Session = Depends(get_db)):
+async def chat(message: ChatMessage):
     """
-    Process chat message and extract invoice data
+    Process chat message and extract invoice/payment data
 
-    Returns AI response with extracted invoice fields
+    Returns AI response with extracted fields
     """
     ai_service = get_ai_service()
-    client_service = ClientService(db)
+    db = get_sheets_db()
 
     # Get available clients for context
-    clients = client_service.list_clients()
-    client_list = [{"id": c.id, "name": c.name} for c in clients]
+    clients = db.get_clients()
+    client_list = [{"id": c["id"], "name": c["name"]} for c in clients]
 
     # Process with AI
     result = await ai_service.chat(
@@ -42,27 +40,22 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
 
 
 @router.post("/confirm")
-async def confirm_invoice(
-    conversation_id: str,
-    db: Session = Depends(get_db)
-):
+async def confirm_action(conversation_id: str):
     """
-    Confirm and create invoice from chat conversation
+    Confirm and create invoice OR payment from chat conversation
 
     Expects the conversation to have extracted all required fields
     """
     ai_service = get_ai_service()
-    invoice_service = InvoiceService(db)
-    client_service = ClientService(db)
+    db = get_sheets_db()
 
-    # Get the last message with extracted data
-    # For now, we'll use the conversation state to get the data
-    clients = client_service.list_clients()
-    client_list = [{"id": c.id, "name": c.name} for c in clients]
+    # Get available clients for context
+    clients = db.get_clients()
+    client_list = [{"id": c["id"], "name": c["name"]} for c in clients]
 
     # Send confirmation message
     result = await ai_service.chat(
-        message="Yes, please create this invoice.",
+        message="Yes, please confirm.",
         conversation_id=conversation_id,
         available_clients=client_list
     )
@@ -71,7 +64,7 @@ async def confirm_invoice(
     if not extracted:
         raise HTTPException(
             status_code=400,
-            detail="No invoice data available. Please provide invoice details first."
+            detail="No data available. Please provide details first."
         )
 
     # Find client by name
@@ -79,35 +72,72 @@ async def confirm_invoice(
     if not client_name:
         raise HTTPException(status_code=400, detail="Client name is required")
 
-    client = client_service.get_client_by_name(client_name)
+    client = db.get_client_by_name(client_name)
     if not client:
         raise HTTPException(
             status_code=404,
             detail=f"Client '{client_name}' not found"
         )
 
-    # Create invoice
+    # Check action type (default to invoice for backwards compatibility)
+    action_type = extracted.get("action_type", "invoice")
+
     amount = extracted.get("amount")
     if not amount:
         raise HTTPException(status_code=400, detail="Amount is required")
 
-    invoice = invoice_service.create_invoice(
-        client_id=client.id,
-        description=extracted.get("description", ""),
-        amount=float(amount),
-        currency=extracted.get("currency", "EUR"),
-        work_dates=extracted.get("work_dates")
-    )
+    if action_type == "payment":
+        # Create payment
+        invoice_id = extracted.get("invoice_id")
+        if not invoice_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Invoice number is required for payments"
+            )
 
-    # Clear conversation
-    ai_service.clear_conversation(conversation_id)
+        try:
+            payment = db.create_payment(
+                invoice_id=int(invoice_id),
+                amount=float(amount),
+                currency=extracted.get("currency", "EUR"),
+                date=extracted.get("date"),
+                method=extracted.get("method"),
+                notes=extracted.get("notes")
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-    return {
-        "success": True,
-        "invoice_id": invoice.id,
-        "invoice_number": invoice.invoice_number,
-        "message": f"Invoice {invoice.invoice_number} created successfully!"
-    }
+        # Clear conversation
+        ai_service.clear_conversation(conversation_id)
+
+        return {
+            "success": True,
+            "action_type": "payment",
+            "payment_id": payment["id"],
+            "invoice_id": invoice_id,
+            "amount": payment["amount"],
+            "message": f"Payment of {payment['currency']} {payment['amount']:,.2f} recorded for Invoice #{invoice_id}"
+        }
+    else:
+        # Create invoice
+        invoice = db.create_invoice(
+            client_id=client["id"],
+            description=extracted.get("description", ""),
+            amount=float(amount),
+            currency=extracted.get("currency", "EUR"),
+            work_dates=extracted.get("work_dates")
+        )
+
+        # Clear conversation
+        ai_service.clear_conversation(conversation_id)
+
+        return {
+            "success": True,
+            "action_type": "invoice",
+            "invoice_id": invoice["id"],
+            "invoice_number": invoice["invoice_number"],
+            "message": f"Invoice {invoice['invoice_number']} created successfully!"
+        }
 
 
 @router.delete("/{conversation_id}")

@@ -124,4 +124,49 @@ class DashboardStats(BaseModel):
     sent_count: int
     paid_count: int
     total_amount: float
+    total_paid: float = 0
+    total_due: float = 0
     total_by_client: dict
+
+
+class PaymentStatus(str, Enum):
+    UNPAID = "unpaid"
+    PARTIAL = "partial"
+    PAID = "paid"
+
+
+class PaymentBase(BaseModel):
+    """Base payment model"""
+    invoice_id: int
+    amount: float
+    currency: str = "EUR"
+    date: Optional[str] = None  # DD.MM.YYYY format, defaults to today
+    method: Optional[str] = None  # e.g., "bank transfer", "cash"
+    notes: Optional[str] = None
+
+
+class PaymentCreate(PaymentBase):
+    """Create payment request"""
+    pass
+
+
+class Payment(PaymentBase):
+    """Payment with all fields"""
+    id: int
+    client: str
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class ClientSummary(BaseModel):
+    """Client summary with totals"""
+    client: dict
+    total_invoiced: float
+    total_paid: float
+    total_due: float
+    invoice_count: int
+    payment_count: int
+    invoices: List[dict]
+    payments: List[dict]

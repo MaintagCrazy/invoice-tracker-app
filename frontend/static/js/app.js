@@ -8,6 +8,7 @@ const API_BASE = '';
 let invoices = [];
 let clients = [];
 let currentInvoiceId = null;
+let currentClientId = null;
 
 // DOM Elements
 const filterStatus = document.getElementById('filter-status');
@@ -18,6 +19,11 @@ const pdfFrame = document.getElementById('pdf-frame');
 const sendBtn = document.getElementById('send-btn');
 const clientModal = document.getElementById('client-modal');
 const clientForm = document.getElementById('client-form');
+const paymentModal = document.getElementById('payment-modal');
+const paymentForm = document.getElementById('payment-form');
+const paymentClientSelect = document.getElementById('payment-client');
+const paymentInvoiceSelect = document.getElementById('payment-invoice');
+const clientDetailModal = document.getElementById('client-detail-modal');
 
 // Format currency
 function formatCurrency(amount, currency = 'EUR') {
@@ -41,6 +47,8 @@ async function loadStats() {
         document.getElementById('stat-draft').textContent = stats.draft_count;
         document.getElementById('stat-sent').textContent = stats.sent_count;
         document.getElementById('stat-paid').textContent = stats.paid_count;
+        document.getElementById('stat-due').textContent = formatCurrency(stats.total_due || 0);
+        document.getElementById('stat-received').textContent = formatCurrency(stats.total_paid || 0);
         document.getElementById('stat-total-amount').textContent = formatCurrency(stats.total_amount);
 
         // Client breakdown
@@ -77,12 +85,21 @@ async function loadInvoices() {
     }
 }
 
+// Get payment status class
+function getPaymentStatusClass(status) {
+    switch (status) {
+        case 'paid': return 'payment-paid';
+        case 'partial': return 'payment-partial';
+        default: return 'payment-unpaid';
+    }
+}
+
 // Render invoices table
 function renderInvoices() {
     if (invoices.length === 0) {
         invoiceTable.innerHTML = `
             <tr>
-                <td colspan="7" class="px-6 py-8 text-center text-gray-500">
+                <td colspan="10" class="px-4 py-8 text-center text-gray-500">
                     <i class="fas fa-file-invoice text-4xl mb-3 text-gray-300"></i>
                     <p>No invoices found</p>
                     <a href="/chat" class="text-blue-600 hover:underline">Create your first invoice</a>
@@ -94,29 +111,42 @@ function renderInvoices() {
 
     invoiceTable.innerHTML = invoices.map(inv => `
         <tr class="hover:bg-gray-50">
-            <td class="px-6 py-4 whitespace-nowrap">
+            <td class="px-4 py-3 whitespace-nowrap">
                 <span class="font-medium">${inv.invoice_number}</span>
             </td>
-            <td class="px-6 py-4">
-                ${inv.client?.name || '-'}
+            <td class="px-4 py-3">
+                <button onclick="showClientDetail(${inv.client_id})" class="text-blue-600 hover:text-blue-800 hover:underline text-left">
+                    ${inv.client?.name || '-'}
+                </button>
             </td>
-            <td class="px-6 py-4">
+            <td class="px-4 py-3">
                 <span class="truncate block max-w-xs" title="${inv.description}">
                     ${inv.description}
                 </span>
             </td>
-            <td class="px-6 py-4 whitespace-nowrap font-medium">
+            <td class="px-4 py-3 whitespace-nowrap font-medium">
                 ${formatCurrency(inv.amount, inv.currency)}
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-gray-500">
+            <td class="px-4 py-3 whitespace-nowrap text-green-600">
+                ${formatCurrency(inv.amount_paid || 0, inv.currency)}
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap ${inv.amount_due > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}">
+                ${formatCurrency(inv.amount_due || 0, inv.currency)}
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-gray-500">
                 ${formatDate(inv.issue_date)}
             </td>
-            <td class="px-6 py-4 whitespace-nowrap">
+            <td class="px-4 py-3 whitespace-nowrap">
                 <span class="px-2 py-1 rounded-full text-xs font-medium status-${inv.status}">
                     ${inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}
                 </span>
             </td>
-            <td class="px-6 py-4 whitespace-nowrap">
+            <td class="px-4 py-3 whitespace-nowrap">
+                <span class="px-2 py-1 rounded-full text-xs font-medium ${getPaymentStatusClass(inv.payment_status)}">
+                    ${(inv.payment_status || 'unpaid').charAt(0).toUpperCase() + (inv.payment_status || 'unpaid').slice(1)}
+                </span>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
                 <div class="flex items-center space-x-2">
                     <button onclick="previewInvoice(${inv.id})" class="text-blue-600 hover:text-blue-800" title="Preview">
                         <i class="fas fa-eye"></i>
@@ -126,9 +156,9 @@ function renderInvoices() {
                             <i class="fas fa-paper-plane"></i>
                         </button>
                     ` : ''}
-                    ${inv.status === 'sent' ? `
-                        <button onclick="markPaid(${inv.id})" class="text-green-600 hover:text-green-800" title="Mark Paid">
-                            <i class="fas fa-check-circle"></i>
+                    ${inv.amount_due > 0 ? `
+                        <button onclick="openPaymentModalForInvoice(${inv.id})" class="text-green-600 hover:text-green-800" title="Add Payment">
+                            <i class="fas fa-plus-circle"></i>
                         </button>
                     ` : ''}
                 </div>
@@ -284,6 +314,8 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closePdfModal();
         closeClientModal();
+        closePaymentModal();
+        closeClientDetailModal();
     }
 });
 
@@ -293,6 +325,233 @@ pdfModal.addEventListener('click', (e) => {
 });
 clientModal.addEventListener('click', (e) => {
     if (e.target === clientModal) closeClientModal();
+});
+
+// ============ PAYMENT MODAL ============
+
+// Open payment modal
+function openPaymentModal() {
+    // Populate client dropdown
+    paymentClientSelect.innerHTML = '<option value="">Select client...</option>' +
+        clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+    paymentInvoiceSelect.innerHTML = '<option value="">Select client first...</option>';
+    document.getElementById('invoice-due-info').textContent = '';
+    document.getElementById('payment-amount').value = '';
+
+    paymentModal.classList.remove('hidden');
+    paymentModal.classList.add('flex');
+}
+
+// Open payment modal for specific invoice
+function openPaymentModalForInvoice(invoiceId) {
+    const invoice = invoices.find(i => i.id === invoiceId);
+    if (!invoice) return;
+
+    openPaymentModal();
+
+    // Pre-select client
+    paymentClientSelect.value = invoice.client_id;
+    loadInvoicesForPayment(invoice.client_id).then(() => {
+        paymentInvoiceSelect.value = invoiceId;
+        updateInvoiceDueInfo();
+    });
+}
+
+// Load invoices for payment dropdown (filtered by client)
+async function loadInvoicesForPayment(clientId) {
+    if (!clientId) {
+        paymentInvoiceSelect.innerHTML = '<option value="">Select client first...</option>';
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/api/clients/${clientId}/unpaid-invoices`);
+        const data = await response.json();
+        const unpaidInvoices = data.unpaid_invoices || [];
+
+        if (unpaidInvoices.length === 0) {
+            paymentInvoiceSelect.innerHTML = '<option value="">No unpaid invoices</option>';
+        } else {
+            paymentInvoiceSelect.innerHTML = '<option value="">Select invoice...</option>' +
+                unpaidInvoices.map(inv =>
+                    `<option value="${inv.id}" data-due="${inv.amount_due}" data-currency="${inv.currency}">
+                        #${inv.invoice_number} (${formatCurrency(inv.amount_due, inv.currency)} due)
+                    </option>`
+                ).join('');
+        }
+    } catch (error) {
+        console.error('Error loading invoices for payment:', error);
+        paymentInvoiceSelect.innerHTML = '<option value="">Error loading invoices</option>';
+    }
+}
+
+// Update invoice due info when selection changes
+function updateInvoiceDueInfo() {
+    const selectedOption = paymentInvoiceSelect.selectedOptions[0];
+    const infoEl = document.getElementById('invoice-due-info');
+
+    if (selectedOption && selectedOption.value) {
+        const due = selectedOption.dataset.due;
+        const currency = selectedOption.dataset.currency || 'EUR';
+        infoEl.textContent = `Amount due: ${formatCurrency(parseFloat(due), currency)}`;
+        document.getElementById('payment-amount').max = due;
+    } else {
+        infoEl.textContent = '';
+    }
+}
+
+// Close payment modal
+function closePaymentModal() {
+    paymentModal.classList.add('hidden');
+    paymentModal.classList.remove('flex');
+    paymentForm.reset();
+}
+
+// Handle client selection change in payment modal
+paymentClientSelect.addEventListener('change', () => {
+    loadInvoicesForPayment(paymentClientSelect.value);
+    document.getElementById('invoice-due-info').textContent = '';
+});
+
+// Handle invoice selection change
+paymentInvoiceSelect.addEventListener('change', updateInvoiceDueInfo);
+
+// Submit payment form
+paymentForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const formData = new FormData(paymentForm);
+    const invoiceId = formData.get('invoice_id');
+    const amount = parseFloat(formData.get('amount'));
+
+    if (!invoiceId || !amount) {
+        alert('Please select an invoice and enter an amount');
+        return;
+    }
+
+    const submitBtn = paymentForm.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Recording...';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/payments/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                invoice_id: parseInt(invoiceId),
+                amount: amount,
+                currency: formData.get('currency') || 'EUR',
+                date: formData.get('date') || null,
+                method: formData.get('method') || null,
+                notes: formData.get('notes') || null
+            })
+        });
+
+        if (response.ok) {
+            const payment = await response.json();
+            alert(`Payment of ${formatCurrency(payment.amount, payment.currency)} recorded successfully!`);
+            closePaymentModal();
+            loadInvoices();
+            loadStats();
+        } else {
+            const error = await response.json();
+            alert(`Error: ${error.detail || 'Failed to record payment'}`);
+        }
+    } catch (error) {
+        console.error('Error recording payment:', error);
+        alert('Error recording payment. Please try again.');
+    }
+
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Record Payment';
+});
+
+// ============ CLIENT DETAIL MODAL ============
+
+// Show client detail
+async function showClientDetail(clientId) {
+    if (!clientId) return;
+
+    currentClientId = clientId;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/clients/${clientId}/summary`);
+        if (!response.ok) {
+            throw new Error('Failed to load client details');
+        }
+
+        const data = await response.json();
+
+        // Update title
+        document.getElementById('client-detail-title').textContent = data.client.name;
+
+        // Update totals
+        document.getElementById('client-total-invoiced').textContent = formatCurrency(data.total_invoiced);
+        document.getElementById('client-total-paid').textContent = formatCurrency(data.total_paid);
+        document.getElementById('client-total-due').textContent = formatCurrency(data.total_due);
+
+        // Populate invoices table
+        const invoicesTable = document.getElementById('client-invoices-table');
+        if (data.invoices.length === 0) {
+            invoicesTable.innerHTML = '<tr><td colspan="6" class="px-4 py-3 text-center text-gray-500">No invoices</td></tr>';
+        } else {
+            invoicesTable.innerHTML = data.invoices.map(inv => `
+                <tr class="bg-white">
+                    <td class="px-4 py-2 font-medium">${inv.invoice_number}</td>
+                    <td class="px-4 py-2 text-gray-500">${formatDate(inv.issue_date)}</td>
+                    <td class="px-4 py-2">${formatCurrency(inv.amount, inv.currency)}</td>
+                    <td class="px-4 py-2 text-green-600">${formatCurrency(inv.amount_paid || 0, inv.currency)}</td>
+                    <td class="px-4 py-2 ${inv.amount_due > 0 ? 'text-red-600' : 'text-gray-400'}">${formatCurrency(inv.amount_due || 0, inv.currency)}</td>
+                    <td class="px-4 py-2">
+                        <span class="px-2 py-1 rounded-full text-xs font-medium ${getPaymentStatusClass(inv.payment_status)}">
+                            ${(inv.payment_status || 'unpaid').charAt(0).toUpperCase() + (inv.payment_status || 'unpaid').slice(1)}
+                        </span>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Populate payments table
+        const paymentsTable = document.getElementById('client-payments-table');
+        if (data.payments.length === 0) {
+            paymentsTable.innerHTML = '<tr><td colspan="5" class="px-4 py-3 text-center text-gray-500">No payments recorded</td></tr>';
+        } else {
+            paymentsTable.innerHTML = data.payments.map(p => `
+                <tr class="bg-white">
+                    <td class="px-4 py-2 text-gray-500">${p.date || '-'}</td>
+                    <td class="px-4 py-2 font-medium text-green-600">${formatCurrency(p.amount, p.currency)}</td>
+                    <td class="px-4 py-2">#${p.invoice_id}</td>
+                    <td class="px-4 py-2 text-gray-500">${p.method || '-'}</td>
+                    <td class="px-4 py-2 text-gray-500">${p.notes || '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Show modal
+        clientDetailModal.classList.remove('hidden');
+        clientDetailModal.classList.add('flex');
+
+    } catch (error) {
+        console.error('Error loading client details:', error);
+        alert('Error loading client details');
+    }
+}
+
+// Close client detail modal
+function closeClientDetailModal() {
+    clientDetailModal.classList.add('hidden');
+    clientDetailModal.classList.remove('flex');
+    currentClientId = null;
+}
+
+// Close modals on background click
+paymentModal.addEventListener('click', (e) => {
+    if (e.target === paymentModal) closePaymentModal();
+});
+
+clientDetailModal.addEventListener('click', (e) => {
+    if (e.target === clientDetailModal) closeClientDetailModal();
 });
 
 // Initialize

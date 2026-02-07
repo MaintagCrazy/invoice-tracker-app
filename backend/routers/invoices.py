@@ -127,3 +127,25 @@ def mark_invoice_sent(invoice_id: int):
     if not success:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return {"success": True, "status": "sent"}
+
+
+@router.get("/{invoice_id}/payments")
+def get_invoice_payments(invoice_id: int):
+    """Get all payments for a specific invoice"""
+    db = get_sheets_db()
+
+    # Verify invoice exists
+    invoice = db.get_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    payments = db.get_payments(invoice_id=invoice_id)
+    return {
+        "invoice_id": invoice_id,
+        "invoice_number": invoice['invoice_number'],
+        "amount": invoice['amount'],
+        "amount_paid": invoice['amount_paid'],
+        "amount_due": invoice['amount_due'],
+        "payment_status": invoice['payment_status'],
+        "payments": payments
+    }

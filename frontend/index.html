@@ -10,6 +10,9 @@
         .status-draft { background-color: #fef3c7; color: #92400e; }
         .status-sent { background-color: #dbeafe; color: #1e40af; }
         .status-paid { background-color: #d1fae5; color: #065f46; }
+        .payment-unpaid { background-color: #fee2e2; color: #991b1b; }
+        .payment-partial { background-color: #fef3c7; color: #92400e; }
+        .payment-paid { background-color: #d1fae5; color: #065f46; }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -32,48 +35,70 @@
     <!-- Main Content -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div class="bg-white rounded-lg shadow p-6">
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+            <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-3 rounded-full bg-blue-100">
-                        <i class="fas fa-file-invoice text-blue-600"></i>
+                    <div class="p-2 rounded-full bg-blue-100">
+                        <i class="fas fa-file-invoice text-blue-600 text-sm"></i>
                     </div>
-                    <div class="ml-4">
-                        <p class="text-sm text-gray-500">Total Invoices</p>
-                        <p class="text-2xl font-semibold text-gray-900" id="stat-total">0</p>
+                    <div class="ml-3">
+                        <p class="text-xs text-gray-500">Total</p>
+                        <p class="text-xl font-semibold text-gray-900" id="stat-total">0</p>
                     </div>
                 </div>
             </div>
-            <div class="bg-white rounded-lg shadow p-6">
+            <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-3 rounded-full bg-yellow-100">
-                        <i class="fas fa-edit text-yellow-600"></i>
+                    <div class="p-2 rounded-full bg-yellow-100">
+                        <i class="fas fa-edit text-yellow-600 text-sm"></i>
                     </div>
-                    <div class="ml-4">
-                        <p class="text-sm text-gray-500">Drafts</p>
-                        <p class="text-2xl font-semibold text-gray-900" id="stat-draft">0</p>
+                    <div class="ml-3">
+                        <p class="text-xs text-gray-500">Drafts</p>
+                        <p class="text-xl font-semibold text-gray-900" id="stat-draft">0</p>
                     </div>
                 </div>
             </div>
-            <div class="bg-white rounded-lg shadow p-6">
+            <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-3 rounded-full bg-blue-100">
-                        <i class="fas fa-paper-plane text-blue-600"></i>
+                    <div class="p-2 rounded-full bg-blue-100">
+                        <i class="fas fa-paper-plane text-blue-600 text-sm"></i>
                     </div>
-                    <div class="ml-4">
-                        <p class="text-sm text-gray-500">Sent</p>
-                        <p class="text-2xl font-semibold text-gray-900" id="stat-sent">0</p>
+                    <div class="ml-3">
+                        <p class="text-xs text-gray-500">Sent</p>
+                        <p class="text-xl font-semibold text-gray-900" id="stat-sent">0</p>
                     </div>
                 </div>
             </div>
-            <div class="bg-white rounded-lg shadow p-6">
+            <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-3 rounded-full bg-green-100">
-                        <i class="fas fa-check-circle text-green-600"></i>
+                    <div class="p-2 rounded-full bg-green-100">
+                        <i class="fas fa-check-circle text-green-600 text-sm"></i>
                     </div>
-                    <div class="ml-4">
-                        <p class="text-sm text-gray-500">Paid</p>
-                        <p class="text-2xl font-semibold text-gray-900" id="stat-paid">0</p>
+                    <div class="ml-3">
+                        <p class="text-xs text-gray-500">Paid</p>
+                        <p class="text-xl font-semibold text-gray-900" id="stat-paid">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center">
+                    <div class="p-2 rounded-full bg-red-100">
+                        <i class="fas fa-exclamation-circle text-red-600 text-sm"></i>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-xs text-gray-500">Due</p>
+                        <p class="text-lg font-semibold text-red-600" id="stat-due">EUR 0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center">
+                    <div class="p-2 rounded-full bg-green-100">
+                        <i class="fas fa-coins text-green-600 text-sm"></i>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-xs text-gray-500">Received</p>
+                        <p class="text-lg font-semibold text-green-600" id="stat-received">EUR 0</p>
                     </div>
                 </div>
             </div>
@@ -112,6 +137,9 @@
                     </select>
                 </div>
                 <div class="flex-1"></div>
+                <button onclick="openPaymentModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 mr-2">
+                    <i class="fas fa-plus mr-2"></i>Add Payment
+                </button>
                 <a href="/chat" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
                     <i class="fas fa-plus mr-2"></i>New Invoice
                 </a>
@@ -123,18 +151,21 @@
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Due</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payment</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200" id="invoice-table">
                     <tr>
-                        <td colspan="7" class="px-6 py-4 text-center text-gray-500">Loading...</td>
+                        <td colspan="10" class="px-4 py-4 text-center text-gray-500">Loading...</td>
                     </tr>
                 </tbody>
             </table>
@@ -193,6 +224,141 @@
                     <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Add Client</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Payment Modal -->
+    <div id="payment-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md m-4">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-medium">Record Payment</h3>
+                <button onclick="closePaymentModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="payment-form" class="p-4 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Client *</label>
+                    <select name="client_id" id="payment-client" required class="mt-1 w-full border rounded px-3 py-2">
+                        <option value="">Select client...</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Invoice *</label>
+                    <select name="invoice_id" id="payment-invoice" required class="mt-1 w-full border rounded px-3 py-2">
+                        <option value="">Select invoice...</option>
+                    </select>
+                    <p id="invoice-due-info" class="text-sm text-gray-500 mt-1"></p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Amount *</label>
+                        <input type="number" name="amount" id="payment-amount" required step="0.01" min="0.01" class="mt-1 w-full border rounded px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Currency</label>
+                        <input type="text" name="currency" value="EUR" class="mt-1 w-full border rounded px-3 py-2 bg-gray-50" readonly>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Date</label>
+                        <input type="text" name="date" id="payment-date" placeholder="DD.MM.YYYY (today)" class="mt-1 w-full border rounded px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Method</label>
+                        <select name="method" class="mt-1 w-full border rounded px-3 py-2">
+                            <option value="">Select...</option>
+                            <option value="bank transfer">Bank Transfer</option>
+                            <option value="cash">Cash</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Notes</label>
+                    <input type="text" name="notes" placeholder="Reference number, etc." class="mt-1 w-full border rounded px-3 py-2">
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="closePaymentModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                        <i class="fas fa-check mr-2"></i>Record Payment
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Client Detail Modal -->
+    <div id="client-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl m-4 max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-medium" id="client-detail-title">Client Details</h3>
+                <button onclick="closeClientDetailModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-4 overflow-y-auto flex-1">
+                <!-- Summary -->
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <div class="bg-blue-50 rounded-lg p-4 text-center">
+                        <p class="text-sm text-gray-600">Total Invoiced</p>
+                        <p class="text-2xl font-bold text-blue-600" id="client-total-invoiced">EUR 0</p>
+                    </div>
+                    <div class="bg-green-50 rounded-lg p-4 text-center">
+                        <p class="text-sm text-gray-600">Total Paid</p>
+                        <p class="text-2xl font-bold text-green-600" id="client-total-paid">EUR 0</p>
+                    </div>
+                    <div class="bg-red-50 rounded-lg p-4 text-center">
+                        <p class="text-sm text-gray-600">Outstanding</p>
+                        <p class="text-2xl font-bold text-red-600" id="client-total-due">EUR 0</p>
+                    </div>
+                </div>
+
+                <!-- Invoices -->
+                <div class="mb-6">
+                    <h4 class="text-md font-medium text-gray-900 mb-3">Invoices</h4>
+                    <div class="bg-gray-50 rounded-lg overflow-hidden">
+                        <table class="min-w-full">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Due</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="client-invoices-table" class="divide-y divide-gray-200">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Payment History -->
+                <div>
+                    <h4 class="text-md font-medium text-gray-900 mb-3">Payment History</h4>
+                    <div class="bg-gray-50 rounded-lg overflow-hidden">
+                        <table class="min-w-full">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody id="client-payments-table" class="divide-y divide-gray-200">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="p-4 border-t flex justify-end">
+                <button onclick="closeClientDetailModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Close</button>
+            </div>
         </div>
     </div>
 

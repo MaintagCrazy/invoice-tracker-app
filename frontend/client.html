@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Client Details - Invoice Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .payment-unpaid { background-color: #fee2e2; color: #991b1b; }
+        .payment-partial { background-color: #fef3c7; color: #92400e; }
+        .payment-paid { background-color: #d1fae5; color: #065f46; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="flex items-center">
+                        <i class="fas fa-file-invoice-dollar text-blue-600 text-2xl mr-3"></i>
+                        <span class="text-xl font-semibold text-gray-900">Invoice Tracker</span>
+                    </a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/" class="text-gray-600 hover:text-blue-600">Dashboard</a>
+                    <a href="/chat" class="text-gray-600 hover:text-blue-600">+ New Invoice</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Client Header -->
+        <div class="flex items-center justify-between mb-8">
+            <div class="flex items-center">
+                <a href="/" class="text-gray-500 hover:text-gray-700 mr-4">
+                    <i class="fas fa-arrow-left"></i>
+                </a>
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-900" id="client-name">Loading...</h1>
+                    <p class="text-gray-500" id="client-address"></p>
+                </div>
+            </div>
+            <button onclick="openPaymentModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                <i class="fas fa-plus mr-2"></i>Add Payment
+            </button>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-blue-50 rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-600">Total Invoiced</p>
+                        <p class="text-3xl font-bold text-blue-600" id="total-invoiced">EUR 0</p>
+                    </div>
+                    <div class="p-3 rounded-full bg-blue-100">
+                        <i class="fas fa-file-invoice text-blue-600 text-xl"></i>
+                    </div>
+                </div>
+                <p class="text-sm text-gray-500 mt-2"><span id="invoice-count">0</span> invoices</p>
+            </div>
+            <div class="bg-green-50 rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-600">Total Paid</p>
+                        <p class="text-3xl font-bold text-green-600" id="total-paid">EUR 0</p>
+                    </div>
+                    <div class="p-3 rounded-full bg-green-100">
+                        <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                    </div>
+                </div>
+                <p class="text-sm text-gray-500 mt-2"><span id="payment-count">0</span> payments</p>
+            </div>
+            <div class="bg-red-50 rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-600">Outstanding</p>
+                        <p class="text-3xl font-bold text-red-600" id="total-due">EUR 0</p>
+                    </div>
+                    <div class="p-3 rounded-full bg-red-100">
+                        <i class="fas fa-exclamation-circle text-red-600 text-xl"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Invoices Section -->
+        <div class="bg-white rounded-lg shadow mb-8">
+            <div class="px-6 py-4 border-b">
+                <h2 class="text-lg font-medium text-gray-900">Invoices</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Due</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200" id="invoices-table">
+                        <tr>
+                            <td colspan="8" class="px-6 py-4 text-center text-gray-500">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Payment History Section -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b">
+                <h2 class="text-lg font-medium text-gray-900">Payment History</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200" id="payments-table">
+                        <tr>
+                            <td colspan="6" class="px-6 py-4 text-center text-gray-500">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Payment Modal -->
+    <div id="payment-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md m-4">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-medium">Record Payment</h3>
+                <button onclick="closePaymentModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="payment-form" class="p-4 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Invoice *</label>
+                    <select name="invoice_id" id="payment-invoice" required class="mt-1 w-full border rounded px-3 py-2">
+                        <option value="">Select invoice...</option>
+                    </select>
+                    <p id="invoice-due-info" class="text-sm text-gray-500 mt-1"></p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Amount *</label>
+                        <input type="number" name="amount" id="payment-amount" required step="0.01" min="0.01" class="mt-1 w-full border rounded px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Currency</label>
+                        <input type="text" name="currency" value="EUR" class="mt-1 w-full border rounded px-3 py-2 bg-gray-50" readonly>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Date</label>
+                        <input type="text" name="date" placeholder="DD.MM.YYYY (today)" class="mt-1 w-full border rounded px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Method</label>
+                        <select name="method" class="mt-1 w-full border rounded px-3 py-2">
+                            <option value="">Select...</option>
+                            <option value="bank transfer">Bank Transfer</option>
+                            <option value="cash">Cash</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Notes</label>
+                    <input type="text" name="notes" placeholder="Reference number, etc." class="mt-1 w-full border rounded px-3 py-2">
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="closePaymentModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                        <i class="fas fa-check mr-2"></i>Record Payment
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        let clientId = null;
+        let clientData = null;
+
+        // Get client ID from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        clientId = urlParams.get('id');
+
+        if (!clientId) {
+            window.location.href = '/';
+        }
+
+        // Format currency
+        function formatCurrency(amount, currency = 'EUR') {
+            return `${currency} ${parseFloat(amount).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`;
+        }
+
+        // Format date
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            return dateStr;
+        }
+
+        // Get payment status class
+        function getPaymentStatusClass(status) {
+            switch (status) {
+                case 'paid': return 'payment-paid';
+                case 'partial': return 'payment-partial';
+                default: return 'payment-unpaid';
+            }
+        }
+
+        // Load client data
+        async function loadClientData() {
+            try {
+                const response = await fetch(`${API_BASE}/api/clients/${clientId}/summary`);
+                if (!response.ok) throw new Error('Client not found');
+
+                clientData = await response.json();
+
+                // Update header
+                document.getElementById('client-name').textContent = clientData.client.name;
+                document.getElementById('client-address').textContent = clientData.client.address?.replace('\n', ', ') || '';
+
+                // Update totals
+                document.getElementById('total-invoiced').textContent = formatCurrency(clientData.total_invoiced);
+                document.getElementById('total-paid').textContent = formatCurrency(clientData.total_paid);
+                document.getElementById('total-due').textContent = formatCurrency(clientData.total_due);
+                document.getElementById('invoice-count').textContent = clientData.invoice_count;
+                document.getElementById('payment-count').textContent = clientData.payment_count;
+
+                // Render invoices
+                renderInvoices();
+
+                // Render payments
+                renderPayments();
+
+                // Load unpaid invoices for payment modal
+                loadUnpaidInvoices();
+
+            } catch (error) {
+                console.error('Error loading client:', error);
+                alert('Error loading client details');
+                window.location.href = '/';
+            }
+        }
+
+        // Render invoices table
+        function renderInvoices() {
+            const table = document.getElementById('invoices-table');
+            if (!clientData.invoices.length) {
+                table.innerHTML = '<tr><td colspan="8" class="px-6 py-4 text-center text-gray-500">No invoices</td></tr>';
+                return;
+            }
+
+            table.innerHTML = clientData.invoices.map(inv => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 font-medium">${inv.invoice_number}</td>
+                    <td class="px-6 py-4">
+                        <span class="truncate block max-w-xs">${inv.description}</span>
+                    </td>
+                    <td class="px-6 py-4 text-gray-500">${formatDate(inv.issue_date)}</td>
+                    <td class="px-6 py-4 font-medium">${formatCurrency(inv.amount, inv.currency)}</td>
+                    <td class="px-6 py-4 text-green-600">${formatCurrency(inv.amount_paid || 0, inv.currency)}</td>
+                    <td class="px-6 py-4 ${inv.amount_due > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}">${formatCurrency(inv.amount_due || 0, inv.currency)}</td>
+                    <td class="px-6 py-4">
+                        <span class="px-2 py-1 rounded-full text-xs font-medium ${getPaymentStatusClass(inv.payment_status)}">
+                            ${(inv.payment_status || 'unpaid').charAt(0).toUpperCase() + (inv.payment_status || 'unpaid').slice(1)}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4">
+                        ${inv.amount_due > 0 ? `
+                            <button onclick="openPaymentModalForInvoice(${inv.id})" class="text-green-600 hover:text-green-800" title="Add Payment">
+                                <i class="fas fa-plus-circle"></i> Add Payment
+                            </button>
+                        ` : ''}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Render payments table
+        function renderPayments() {
+            const table = document.getElementById('payments-table');
+            if (!clientData.payments.length) {
+                table.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">No payments recorded</td></tr>';
+                return;
+            }
+
+            table.innerHTML = clientData.payments.map(p => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 text-gray-500">${p.date || '-'}</td>
+                    <td class="px-6 py-4 font-medium text-green-600">${formatCurrency(p.amount, p.currency)}</td>
+                    <td class="px-6 py-4">#${p.invoice_id}</td>
+                    <td class="px-6 py-4 text-gray-500">${p.method || '-'}</td>
+                    <td class="px-6 py-4 text-gray-500">${p.notes || '-'}</td>
+                    <td class="px-6 py-4">
+                        <button onclick="deletePayment(${p.id})" class="text-red-600 hover:text-red-800" title="Delete">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Load unpaid invoices for payment modal
+        async function loadUnpaidInvoices() {
+            const select = document.getElementById('payment-invoice');
+            const unpaidInvoices = clientData.invoices.filter(i => i.amount_due > 0);
+
+            if (unpaidInvoices.length === 0) {
+                select.innerHTML = '<option value="">No unpaid invoices</option>';
+            } else {
+                select.innerHTML = '<option value="">Select invoice...</option>' +
+                    unpaidInvoices.map(inv =>
+                        `<option value="${inv.id}" data-due="${inv.amount_due}" data-currency="${inv.currency}">
+                            #${inv.invoice_number} (${formatCurrency(inv.amount_due, inv.currency)} due)
+                        </option>`
+                    ).join('');
+            }
+        }
+
+        // Payment modal functions
+        const paymentModal = document.getElementById('payment-modal');
+        const paymentForm = document.getElementById('payment-form');
+        const paymentInvoiceSelect = document.getElementById('payment-invoice');
+
+        function openPaymentModal() {
+            paymentModal.classList.remove('hidden');
+            paymentModal.classList.add('flex');
+        }
+
+        function openPaymentModalForInvoice(invoiceId) {
+            openPaymentModal();
+            paymentInvoiceSelect.value = invoiceId;
+            updateInvoiceDueInfo();
+        }
+
+        function closePaymentModal() {
+            paymentModal.classList.add('hidden');
+            paymentModal.classList.remove('flex');
+            paymentForm.reset();
+        }
+
+        function updateInvoiceDueInfo() {
+            const selectedOption = paymentInvoiceSelect.selectedOptions[0];
+            const infoEl = document.getElementById('invoice-due-info');
+
+            if (selectedOption && selectedOption.value) {
+                const due = selectedOption.dataset.due;
+                const currency = selectedOption.dataset.currency || 'EUR';
+                infoEl.textContent = `Amount due: ${formatCurrency(parseFloat(due), currency)}`;
+                document.getElementById('payment-amount').max = due;
+            } else {
+                infoEl.textContent = '';
+            }
+        }
+
+        paymentInvoiceSelect.addEventListener('change', updateInvoiceDueInfo);
+
+        // Submit payment
+        paymentForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(paymentForm);
+            const invoiceId = formData.get('invoice_id');
+            const amount = parseFloat(formData.get('amount'));
+
+            if (!invoiceId || !amount) {
+                alert('Please select an invoice and enter an amount');
+                return;
+            }
+
+            const submitBtn = paymentForm.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Recording...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/payments/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        invoice_id: parseInt(invoiceId),
+                        amount: amount,
+                        currency: formData.get('currency') || 'EUR',
+                        date: formData.get('date') || null,
+                        method: formData.get('method') || null,
+                        notes: formData.get('notes') || null
+                    })
+                });
+
+                if (response.ok) {
+                    const payment = await response.json();
+                    alert(`Payment of ${formatCurrency(payment.amount, payment.currency)} recorded successfully!`);
+                    closePaymentModal();
+                    loadClientData();
+                } else {
+                    const error = await response.json();
+                    alert(`Error: ${error.detail || 'Failed to record payment'}`);
+                }
+            } catch (error) {
+                console.error('Error recording payment:', error);
+                alert('Error recording payment. Please try again.');
+            }
+
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Record Payment';
+        });
+
+        // Delete payment
+        async function deletePayment(paymentId) {
+            if (!confirm('Are you sure you want to delete this payment?')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/payments/${paymentId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadClientData();
+                } else {
+                    const error = await response.json();
+                    alert(`Error: ${error.detail || 'Failed to delete payment'}`);
+                }
+            } catch (error) {
+                console.error('Error deleting payment:', error);
+                alert('Error deleting payment');
+            }
+        }
+
+        // Close modal on escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closePaymentModal();
+        });
+
+        paymentModal.addEventListener('click', (e) => {
+            if (e.target === paymentModal) closePaymentModal();
+        });
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', loadClientData);
+    </script>
+</body>
+</html>
