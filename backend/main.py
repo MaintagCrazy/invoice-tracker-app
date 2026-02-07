@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 """
 Invoice Tracker App - FastAPI Backend
-
-Main application entry point with:
-- REST API endpoints for invoices, clients, chat
-- PDF generation with WeasyPrint
-- Email sending via Gmail API
-- AI chat with OpenRouter/Gemini Flash
+Using Google Sheets as the database
 """
 
 import os
@@ -19,7 +14,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
-from models.database import init_db, SessionLocal, seed_default_clients
 from routers import invoices_router, clients_router, chat_router, email_router
 from config import config
 
@@ -35,51 +29,26 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifecycle hooks"""
     logger.info("Starting Invoice Tracker App...")
-
-    # Initialize database
-    init_db()
-    logger.info("Database initialized")
-
-    # Seed default clients
-    db = SessionLocal()
-    try:
-        seed_default_clients(db)
-        logger.info("Default clients seeded")
-    finally:
-        db.close()
-
+    logger.info("Using Google Sheets as database")
     logger.info("Invoice Tracker App started!")
-    logger.info("API docs: http://localhost:8000/docs")
 
     yield
 
     logger.info("Shutting down Invoice Tracker App...")
-    logger.info("Shutdown complete")
 
 
 # Create FastAPI app
 app = FastAPI(
     title="Invoice Tracker App",
-    description="AI-powered invoice creation and tracking",
-    version="1.0.0",
+    description="AI-powered invoice creation and tracking - Google Sheets backend",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# CORS settings
-ALLOWED_ORIGINS = os.environ.get("CORS_ORIGINS", "").split(",") if os.environ.get("CORS_ORIGINS") else []
-DEFAULT_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000",
-    "http://localhost:8000",
-]
-
-all_origins = list(set(DEFAULT_ORIGINS + [o.strip() for o in ALLOWED_ORIGINS if o.strip()]))
-
+# CORS - allow all for simplicity
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=all_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -105,8 +74,8 @@ async def root():
         return FileResponse(index_path)
     return {
         "app": "Invoice Tracker App",
-        "version": "1.0.0",
-        "status": "running",
+        "version": "2.0.0",
+        "database": "Google Sheets",
         "endpoints": {
             "invoices": "/api/invoices",
             "clients": "/api/clients",
@@ -128,9 +97,20 @@ async def chat_page():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    # Test sheets connection
+    sheets_ok = False
+    try:
+        from services.sheets_database import get_sheets_db
+        db = get_sheets_db()
+        db.get_clients()  # Quick test
+        sheets_ok = True
+    except Exception as e:
+        logger.error(f"Sheets connection error: {e}")
+
     return {
-        "status": "healthy",
-        "database": "connected",
+        "status": "healthy" if sheets_ok else "degraded",
+        "database": "google_sheets",
+        "sheets_connected": sheets_ok,
         "ai_configured": bool(config.OPENROUTER_API_KEY),
         "email_configured": bool(config.GMAIL_TOKEN_B64)
     }
