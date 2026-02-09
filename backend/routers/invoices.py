@@ -1,11 +1,15 @@
 """
 Invoice endpoints - using Google Sheets as database
 """
+import logging
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Response
 
 from services.sheets_database import get_sheets_db
 from services.pdf_service import get_pdf_service, WEASYPRINT_AVAILABLE
+from services.drive_storage import get_drive_service, sanitize_filename
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -42,7 +46,7 @@ def create_invoice(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    return db.create_invoice(
+    invoice = db.create_invoice(
         client_id=client_id,
         description=description,
         amount=amount,
@@ -51,6 +55,35 @@ def create_invoice(
         due_date=due_date,
         work_dates=work_dates
     )
+
+    # Auto-upload PDF to Google Drive (non-blocking — don't fail creation)
+    try:
+        if WEASYPRINT_AVAILABLE:
+            pdf_service = get_pdf_service()
+            invoice_data = {
+                "invoice_number": invoice['invoice_number'],
+                "description": invoice['description'],
+                "amount": invoice['amount'],
+                "currency": invoice['currency'],
+                "issue_date": invoice['issue_date'],
+                "due_date": invoice['due_date']
+            }
+            client_data = {
+                "name": client.get('name', ''),
+                "address": client.get('address', ''),
+                "company_id": client.get('company_id', '')
+            }
+            pdf_bytes = pdf_service.generate_pdf_bytes(invoice_data, client_data)
+            filename = sanitize_filename(invoice['invoice_number'], client.get('name', ''))
+            drive = get_drive_service()
+            saved_path = drive.upload_pdf(pdf_bytes, filename)
+            db.update_invoice_drive_file_id(invoice['file_number'], filename)
+            invoice['drive_file_id'] = filename
+            logger.info(f"Saved invoice {invoice['invoice_number']} to Drive folder: {saved_path}")
+    except Exception as e:
+        logger.warning(f"Drive upload failed for new invoice (non-critical): {e}")
+
+    return invoice
 
 
 @router.get("/{invoice_id}")
@@ -124,6 +157,21 @@ def download_invoice_pdf(invoice_id: int):
     if WEASYPRINT_AVAILABLE:
         try:
             content = pdf_service.generate_pdf_bytes(invoice_data, client_data)
+
+            # Lazy backfill: save to Drive folder on first download if not already stored
+            if not invoice.get('drive_file_id'):
+                try:
+                    drive_filename = sanitize_filename(
+                        invoice['invoice_number'],
+                        client_data.get('name', '')
+                    )
+                    drive = get_drive_service()
+                    drive.upload_pdf(content, drive_filename)
+                    db.update_invoice_drive_file_id(invoice['file_number'], drive_filename)
+                    logger.info(f"Lazy backfill: saved invoice {invoice['invoice_number']} to Drive folder")
+                except Exception as e:
+                    logger.warning(f"Lazy Drive upload failed (non-critical): {e}")
+
             return Response(
                 content=content,
                 media_type="application/pdf",

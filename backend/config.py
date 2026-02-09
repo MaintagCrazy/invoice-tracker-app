@@ -19,6 +19,9 @@ class Config:
     GMAIL_CREDENTIALS_B64: str = os.environ.get("GMAIL_CREDENTIALS_B64", "")
     GMAIL_TOKEN_B64: str = os.environ.get("GMAIL_TOKEN_B64", "")
 
+    # Google Drive (auto-share invoice folder with this account)
+    USER_EMAIL: str = os.environ.get("USER_EMAIL", "")
+
     # OpenRouter Settings
     AI_MODEL: str = "google/gemini-2.0-flash-001"
     AI_BASE_URL: str = "https://openrouter.ai/api/v1"

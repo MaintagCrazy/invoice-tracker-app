@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
-from routers import invoices_router, clients_router, chat_router, email_router, payments_router
+from routers import invoices_router, clients_router, chat_router, email_router, payments_router, sync_router
 from config import config
 
 # Configure logging
@@ -60,6 +60,7 @@ app.include_router(clients_router)
 app.include_router(chat_router)
 app.include_router(email_router)
 app.include_router(payments_router)
+app.include_router(sync_router)
 
 # Serve static files (frontend)
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
@@ -117,10 +118,20 @@ async def health_check():
     except Exception as e:
         logger.error(f"Sheets connection error: {e}")
 
+    # Test Drive folder access
+    drive_ok = False
+    try:
+        from services.drive_storage import get_drive_service
+        drive = get_drive_service()
+        drive_ok = drive.is_connected
+    except Exception as e:
+        logger.error(f"Drive folder error: {e}")
+
     return {
         "status": "healthy" if sheets_ok else "degraded",
         "database": "google_sheets",
         "sheets_connected": sheets_ok,
+        "drive_connected": drive_ok,
         "ai_configured": bool(config.OPENROUTER_API_KEY),
         "email_configured": bool(config.GMAIL_TOKEN_B64)
     }

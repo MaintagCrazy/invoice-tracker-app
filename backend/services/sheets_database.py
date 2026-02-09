@@ -232,7 +232,8 @@ class SheetsDatabaseService:
                     "created_at": row.get('Created At', ''),
                     "sent_at": None,
                     "paid_at": None,
-                    "pdf_path": None
+                    "pdf_path": None,
+                    "drive_file_id": row.get('Drive File ID', '')
                 }
                 invoices.append(invoice)
 
@@ -374,6 +375,22 @@ class SheetsDatabaseService:
             return False
         except Exception as e:
             logger.error(f"Error updating invoice status: {e}")
+            return False
+
+    def update_invoice_drive_file_id(self, file_number: int, drive_file_id: str) -> bool:
+        """Write Drive File ID to column K for a given invoice"""
+        try:
+            all_data = self.db_worksheet.get_all_records()
+            for idx, row in enumerate(all_data):
+                if int(row.get('File #', 0)) == file_number:
+                    row_num = idx + 2  # 1 for header, 1 for 0-index
+                    # Drive File ID is column K (11th column)
+                    self.db_worksheet.update_cell(row_num, 11, drive_file_id)
+                    logger.info(f"Updated invoice {file_number} Drive File ID: {drive_file_id}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error updating Drive File ID for invoice {file_number}: {e}")
             return False
 
     def get_stats(self) -> Dict:
