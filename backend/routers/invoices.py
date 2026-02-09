@@ -11,10 +11,10 @@ router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
 
 @router.get("/")
-def list_invoices(status: Optional[str] = None):
+def list_invoices(status: Optional[str] = None, client_id: Optional[int] = None):
     """List all invoices from Google Sheet"""
     db = get_sheets_db()
-    return db.get_invoices(status=status)
+    return db.get_invoices(status=status, client_id=client_id)
 
 
 @router.get("/stats")
