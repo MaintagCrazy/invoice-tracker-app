@@ -64,8 +64,8 @@ def get_invoice(invoice_id: int):
 
 
 @router.get("/{invoice_id}/preview")
-def preview_invoice_pdf(invoice_id: int):
-    """Generate and return PDF preview"""
+def preview_invoice_html(invoice_id: int):
+    """Generate and return HTML preview (always works)"""
     db = get_sheets_db()
     invoice = db.get_invoice(invoice_id)
     if not invoice:
@@ -73,7 +73,6 @@ def preview_invoice_pdf(invoice_id: int):
 
     pdf_service = get_pdf_service()
 
-    # Prepare invoice data
     invoice_data = {
         "invoice_number": invoice['invoice_number'],
         "description": invoice['description'],
@@ -83,7 +82,6 @@ def preview_invoice_pdf(invoice_id: int):
         "due_date": invoice['due_date']
     }
 
-    # Prepare client data
     client = invoice.get('client', {})
     client_data = {
         "name": client.get('name', ''),
@@ -91,22 +89,60 @@ def preview_invoice_pdf(invoice_id: int):
         "company_id": client.get('company_id', '')
     }
 
-    content = pdf_service.generate_pdf_bytes(invoice_data, client_data)
+    html = pdf_service.generate_html(invoice_data, client_data)
+    return Response(content=html.encode('utf-8'), media_type="text/html")
+
+
+@router.get("/{invoice_id}/download")
+def download_invoice_pdf(invoice_id: int):
+    """Download invoice as PDF (falls back to HTML if WeasyPrint unavailable)"""
+    db = get_sheets_db()
+    invoice = db.get_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    pdf_service = get_pdf_service()
+
+    invoice_data = {
+        "invoice_number": invoice['invoice_number'],
+        "description": invoice['description'],
+        "amount": invoice['amount'],
+        "currency": invoice['currency'],
+        "issue_date": invoice['issue_date'],
+        "due_date": invoice['due_date']
+    }
+
+    client = invoice.get('client', {})
+    client_data = {
+        "name": client.get('name', ''),
+        "address": client.get('address', ''),
+        "company_id": client.get('company_id', '')
+    }
+
+    filename = f"Faktura_{invoice['invoice_number'].replace('/', '_')}"
 
     if WEASYPRINT_AVAILABLE:
-        return Response(
-            content=content,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"inline; filename=Faktura_{invoice['invoice_number'].replace('/', '_')}.pdf"
-            }
-        )
-    else:
-        return Response(
-            content=content,
-            media_type="text/html",
-            headers={"Content-Disposition": "inline"}
-        )
+        try:
+            content = pdf_service.generate_pdf_bytes(invoice_data, client_data)
+            return Response(
+                content=content,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}.pdf"
+                }
+            )
+        except Exception:
+            pass  # Fall through to HTML
+
+    # Fallback: return HTML as downloadable file
+    html = pdf_service.generate_html(invoice_data, client_data)
+    return Response(
+        content=html.encode('utf-8'),
+        media_type="text/html",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}.html"
+        }
+    )
 
 
 @router.post("/{invoice_id}/mark-paid")

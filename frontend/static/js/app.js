@@ -469,6 +469,11 @@ function closePdfModal() {
     currentInvoiceId = null;
 }
 
+function downloadInvoice() {
+    if (!currentInvoiceId) return;
+    window.open(`${API_BASE}/api/invoices/${currentInvoiceId}/download`, '_blank');
+}
+
 sendBtn.addEventListener('click', async () => {
     if (!currentInvoiceId) return;
 
