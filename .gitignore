@@ -32,4 +32,12 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Secrets / credentials - NEVER commit these
 railway_env_vars.txt
+sa_b64_value.txt
+*.key
+*.pem
+*.p12
+.env.*
+!.env.example
