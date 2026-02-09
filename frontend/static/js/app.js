@@ -7,13 +7,17 @@ const API_BASE = '';
 // State
 let invoices = [];
 let clients = [];
+let payments = [];
 let currentInvoiceId = null;
 let currentClientId = null;
+let currentClientFilter = null; // client name being filtered
+let currentView = 'invoices'; // 'invoices' or 'payments'
 
 // DOM Elements
 const filterStatus = document.getElementById('filter-status');
 const filterClient = document.getElementById('filter-client');
 const invoiceTable = document.getElementById('invoice-table');
+const paymentsTable = document.getElementById('payments-table');
 const pdfModal = document.getElementById('pdf-modal');
 const pdfFrame = document.getElementById('pdf-frame');
 const sendBtn = document.getElementById('send-btn');
@@ -34,10 +38,31 @@ function formatCurrency(amount, currency = 'EUR') {
 function formatDate(dateStr) {
     if (!dateStr) return '-';
     const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr; // Return raw string if invalid
     return date.toLocaleDateString('de-DE');
 }
 
-// Load dashboard stats
+// ============ VIEW SWITCHING ============
+
+function showInvoicesView() {
+    currentView = 'invoices';
+    document.getElementById('invoices-view').classList.remove('hidden');
+    document.getElementById('payments-view').classList.add('hidden');
+    document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-blue-600 text-white rounded-lg font-medium';
+    document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
+}
+
+function showPaymentsView() {
+    currentView = 'payments';
+    document.getElementById('invoices-view').classList.add('hidden');
+    document.getElementById('payments-view').classList.remove('hidden');
+    document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
+    document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-blue-600 text-white rounded-lg font-medium';
+    loadPayments();
+}
+
+// ============ STATS ============
+
 async function loadStats() {
     try {
         const response = await fetch(`${API_BASE}/api/invoices/stats`);
@@ -51,30 +76,34 @@ async function loadStats() {
         document.getElementById('stat-received').textContent = formatCurrency(stats.total_paid || 0);
         document.getElementById('stat-total-outstanding').textContent = formatCurrency(stats.total_due || 0);
 
-        // Client breakdown - show all clients as clickable cards
+        // Client breakdown - vertical list
         const breakdown = document.getElementById('client-breakdown');
         const dueByClient = stats.due_by_client || {};
         const totalByClient = stats.total_by_client || {};
 
-        // Get all clients, sorted by outstanding amount descending
-        const allClients = Object.keys(totalByClient);
-        const sortedClients = allClients.sort((a, b) => (dueByClient[b] || 0) - (dueByClient[a] || 0));
+        const allClients = Object.keys({...dueByClient, ...totalByClient});
+        // Sort: clients with outstanding first (by amount desc), then paid clients
+        const sorted = allClients.sort((a, b) => (dueByClient[b] || 0) - (dueByClient[a] || 0));
 
-        if (sortedClients.length === 0) {
+        if (sorted.length === 0) {
             breakdown.innerHTML = '<p class="text-gray-500">No clients yet</p>';
         } else {
-            breakdown.innerHTML = sortedClients.map(client => {
+            breakdown.innerHTML = sorted.map(client => {
                 const due = dueByClient[client] || 0;
+                const total = totalByClient[client] || 0;
                 const isPaid = due === 0;
-                const bgColor = isPaid ? 'bg-gray-100' : 'bg-red-50 border-red-200';
-                const textColor = isPaid ? 'text-gray-500' : 'text-red-600';
-                const statusText = isPaid ? 'Paid' : formatCurrency(due);
+                const isActive = currentClientFilter === client;
 
                 return `
-                    <div class="p-3 rounded-lg border ${bgColor} cursor-pointer hover:shadow-md transition-shadow"
+                    <div class="client-item flex justify-between items-center px-3 py-2 rounded-lg border cursor-pointer ${isActive ? 'active border-blue-500 bg-blue-50' : isPaid ? 'border-gray-200 bg-gray-50' : 'border-red-200 bg-red-50'}"
                          onclick="filterByClientName('${client.replace(/'/g, "\\'")}')">
-                        <div class="font-medium text-gray-900 truncate">${client}</div>
-                        <div class="text-lg font-bold ${textColor}">${statusText}</div>
+                        <div class="flex items-center space-x-2">
+                            ${isActive ? '<i class="fas fa-chevron-right text-blue-500 text-xs"></i>' : ''}
+                            <span class="${isActive ? 'font-semibold text-blue-700' : isPaid ? 'text-gray-600' : 'text-gray-900'}">${client}</span>
+                        </div>
+                        <span class="${isPaid ? 'text-gray-400 text-sm' : 'font-semibold text-red-600'}">
+                            ${isPaid ? 'Paid' : formatCurrency(due)}
+                        </span>
                     </div>
                 `;
             }).join('');
@@ -84,7 +113,8 @@ async function loadStats() {
     }
 }
 
-// Load invoices
+// ============ INVOICES ============
+
 async function loadInvoices() {
     try {
         let url = `${API_BASE}/api/invoices/`;
@@ -104,7 +134,6 @@ async function loadInvoices() {
     }
 }
 
-// Get payment status class
 function getPaymentStatusClass(status) {
     switch (status) {
         case 'paid': return 'payment-paid';
@@ -113,7 +142,6 @@ function getPaymentStatusClass(status) {
     }
 }
 
-// Render invoices table
 function renderInvoices() {
     if (invoices.length === 0) {
         invoiceTable.innerHTML = `
@@ -129,40 +157,44 @@ function renderInvoices() {
     }
 
     invoiceTable.innerHTML = invoices.map(inv => {
-        const isPaid = inv.payment_status === 'paid' || inv.amount_due === 0;
-        const rowClass = isPaid ? 'bg-gray-100 text-gray-500' : 'hover:bg-gray-50';
+        const isPaid = inv.payment_status === 'paid' || (inv.amount_due !== undefined && inv.amount_due <= 0);
+        const rowBg = isPaid ? 'bg-gray-100' : '';
+        const textMuted = isPaid ? 'text-gray-400' : '';
 
         return `
-        <tr class="${rowClass}">
+        <tr class="${rowBg} hover:bg-gray-50">
             <td class="px-4 py-3 whitespace-nowrap">
-                <span class="font-medium">${inv.invoice_number}</span>
+                <span class="font-medium ${textMuted}">${inv.invoice_number}</span>
             </td>
-            <td class="px-4 py-3">
-                <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="${isPaid ? 'text-gray-600' : 'text-blue-600 hover:text-blue-800'} hover:underline text-left">
+            <td class="px-4 py-3 whitespace-nowrap">
+                <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="${isPaid ? 'text-gray-500' : 'text-blue-600 hover:text-blue-800'} hover:underline text-left">
                     ${inv.client?.name || '-'}
                 </button>
             </td>
-            <td class="px-4 py-3">
-                <span class="truncate block max-w-xs" title="${inv.description}">
-                    ${inv.description}
+            <td class="px-4 py-3 ${textMuted}">
+                <span class="truncate block max-w-xs" title="${inv.description || ''}">
+                    ${inv.description || '-'}
                 </span>
             </td>
-            <td class="px-4 py-3 whitespace-nowrap font-medium">
+            <td class="px-4 py-3 whitespace-nowrap font-medium ${textMuted}">
                 ${formatCurrency(inv.amount, inv.currency)}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap ${isPaid ? '' : 'text-green-600'}">
+            <td class="px-4 py-3 whitespace-nowrap ${isPaid ? 'text-gray-400' : 'text-green-600'}">
                 ${formatCurrency(inv.amount_paid || 0, inv.currency)}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap ${inv.amount_due > 0 ? 'text-red-600 font-bold' : ''}">
+            <td class="px-4 py-3 whitespace-nowrap ${inv.amount_due > 0 ? 'text-red-600 font-bold' : textMuted}">
                 ${inv.amount_due > 0 ? formatCurrency(inv.amount_due, inv.currency) : '-'}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap">
+            <td class="px-4 py-3 whitespace-nowrap ${textMuted}">
                 ${formatDate(inv.issue_date)}
             </td>
             <td class="px-4 py-3 whitespace-nowrap">
-                ${isPaid ? '<span class="text-green-600 font-medium">Paid</span>' :
-                  inv.amount_due > 0 ? `<span class="text-red-600 font-medium">Due ${formatCurrency(inv.amount_due, inv.currency)}</span>` :
-                  `<span class="px-2 py-1 rounded-full text-xs font-medium status-${inv.status}">${inv.status}</span>`}
+                ${isPaid
+                    ? '<span class="text-green-600 font-medium text-sm">Paid</span>'
+                    : inv.amount_due > 0
+                        ? '<span class="text-red-600 font-medium text-sm">Outstanding</span>'
+                        : `<span class="px-2 py-1 rounded-full text-xs font-medium status-${inv.status}">${inv.status}</span>`
+                }
             </td>
             <td class="px-4 py-3 whitespace-nowrap">
                 <div class="flex items-center space-x-2">
@@ -186,7 +218,55 @@ function renderInvoices() {
     }).join('');
 }
 
-// Load clients for filter
+// ============ PAYMENTS VIEW ============
+
+async function loadPayments() {
+    try {
+        let url = `${API_BASE}/api/payments/`;
+        if (filterClient.value) {
+            url += `?client_id=${filterClient.value}`;
+        }
+
+        const response = await fetch(url);
+        payments = await response.json();
+        renderPayments();
+    } catch (error) {
+        console.error('Error loading payments:', error);
+        paymentsTable.innerHTML = '<tr><td colspan="6" class="px-4 py-4 text-center text-red-500">Error loading payments</td></tr>';
+    }
+}
+
+function renderPayments() {
+    if (payments.length === 0) {
+        paymentsTable.innerHTML = `
+            <tr>
+                <td colspan="6" class="px-4 py-8 text-center text-gray-500">
+                    <i class="fas fa-coins text-4xl mb-3 text-gray-300"></i>
+                    <p>No payments recorded</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    paymentsTable.innerHTML = payments.map(p => `
+        <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3 whitespace-nowrap text-gray-700">${p.date || '-'}</td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <button onclick="filterByClientName('${(p.client || '').replace(/'/g, "\\'")}')" class="text-blue-600 hover:underline text-left">
+                    ${p.client || '-'}
+                </button>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-gray-600">#${p.invoice_id || '-'}</td>
+            <td class="px-4 py-3 whitespace-nowrap font-semibold text-green-600">${formatCurrency(p.amount, p.currency)}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-gray-500">${p.method || '-'}</td>
+            <td class="px-4 py-3 text-gray-500">${p.notes || '-'}</td>
+        </tr>
+    `).join('');
+}
+
+// ============ CLIENT FILTER ============
+
 async function loadClients() {
     try {
         const response = await fetch(`${API_BASE}/api/clients/`);
@@ -199,7 +279,45 @@ async function loadClients() {
     }
 }
 
-// Preview invoice PDF
+function filterByClientName(clientName) {
+    const client = clients.find(c => c.name === clientName);
+    if (client) {
+        filterClient.value = client.id;
+        currentClientFilter = clientName;
+        updateFilterUI();
+        loadInvoices();
+        if (currentView === 'payments') loadPayments();
+        // Re-render client breakdown to show highlight
+        loadStats();
+    }
+}
+
+function clearClientFilter() {
+    filterClient.value = '';
+    currentClientFilter = null;
+    updateFilterUI();
+    loadInvoices();
+    if (currentView === 'payments') loadPayments();
+    loadStats();
+}
+
+function updateFilterUI() {
+    const showAllBtn = document.getElementById('show-all-btn');
+    const filterLabel = document.getElementById('current-filter-label');
+    const filterName = document.getElementById('filter-client-name');
+
+    if (currentClientFilter) {
+        showAllBtn.classList.remove('hidden');
+        filterLabel.classList.remove('hidden');
+        filterName.textContent = currentClientFilter;
+    } else {
+        showAllBtn.classList.add('hidden');
+        filterLabel.classList.add('hidden');
+    }
+}
+
+// ============ PDF PREVIEW ============
+
 function previewInvoice(invoiceId) {
     currentInvoiceId = invoiceId;
     pdfFrame.src = `${API_BASE}/api/invoices/${invoiceId}/preview`;
@@ -208,7 +326,6 @@ function previewInvoice(invoiceId) {
     pdfModal.classList.add('flex');
 }
 
-// Preview and send
 function previewAndSend(invoiceId) {
     currentInvoiceId = invoiceId;
     pdfFrame.src = `${API_BASE}/api/invoices/${invoiceId}/preview`;
@@ -217,7 +334,6 @@ function previewAndSend(invoiceId) {
     pdfModal.classList.add('flex');
 }
 
-// Close PDF modal
 function closePdfModal() {
     pdfModal.classList.add('hidden');
     pdfModal.classList.remove('flex');
@@ -225,7 +341,6 @@ function closePdfModal() {
     currentInvoiceId = null;
 }
 
-// Send invoice
 sendBtn.addEventListener('click', async () => {
     if (!currentInvoiceId) return;
 
@@ -258,7 +373,8 @@ sendBtn.addEventListener('click', async () => {
     sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Send Invoice';
 });
 
-// Mark invoice as paid
+// ============ MARK PAID ============
+
 async function markPaid(invoiceId) {
     if (!confirm('Mark this invoice as paid?')) return;
 
@@ -279,7 +395,8 @@ async function markPaid(invoiceId) {
     }
 }
 
-// Client modal functions
+// ============ CLIENT MODAL ============
+
 function openClientModal() {
     clientModal.classList.remove('hidden');
     clientModal.classList.add('flex');
@@ -291,7 +408,6 @@ function closeClientModal() {
     clientForm.reset();
 }
 
-// Add new client
 clientForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -324,75 +440,9 @@ clientForm.addEventListener('submit', async (e) => {
     }
 });
 
-// Current filter state
-let currentClientFilter = null;
-
-// Filter change handlers
-filterStatus.addEventListener('change', loadInvoices);
-filterClient.addEventListener('change', () => {
-    updateFilterUI();
-    loadInvoices();
-});
-
-// Update filter UI elements
-function updateFilterUI() {
-    const showAllBtn = document.getElementById('show-all-btn');
-    const currentFilter = document.getElementById('current-filter');
-    const filterClientName = document.getElementById('filter-client-name');
-
-    if (currentClientFilter) {
-        showAllBtn.classList.remove('hidden');
-        currentFilter.classList.remove('hidden');
-        filterClientName.textContent = currentClientFilter;
-    } else {
-        showAllBtn.classList.add('hidden');
-        currentFilter.classList.add('hidden');
-    }
-}
-
-// Filter by client name (clicked from breakdown or invoice table)
-function filterByClientName(clientName) {
-    // Find client ID by name
-    const client = clients.find(c => c.name === clientName);
-    if (client) {
-        filterClient.value = client.id;
-        currentClientFilter = clientName;
-        updateFilterUI();
-        loadInvoices();
-    }
-}
-
-// Clear client filter
-function clearClientFilter() {
-    filterClient.value = '';
-    currentClientFilter = null;
-    updateFilterUI();
-    loadInvoices();
-}
-
-// Close modals on escape
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-        closePdfModal();
-        closeClientModal();
-        closePaymentModal();
-        closeClientDetailModal();
-    }
-});
-
-// Close modals on background click
-pdfModal.addEventListener('click', (e) => {
-    if (e.target === pdfModal) closePdfModal();
-});
-clientModal.addEventListener('click', (e) => {
-    if (e.target === clientModal) closeClientModal();
-});
-
 // ============ PAYMENT MODAL ============
 
-// Open payment modal
 function openPaymentModal() {
-    // Populate client dropdown
     paymentClientSelect.innerHTML = '<option value="">Select client...</option>' +
         clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
@@ -404,14 +454,12 @@ function openPaymentModal() {
     paymentModal.classList.add('flex');
 }
 
-// Open payment modal for specific invoice
 function openPaymentModalForInvoice(invoiceId) {
     const invoice = invoices.find(i => i.id === invoiceId);
     if (!invoice) return;
 
     openPaymentModal();
 
-    // Pre-select client
     paymentClientSelect.value = invoice.client_id;
     loadInvoicesForPayment(invoice.client_id).then(() => {
         paymentInvoiceSelect.value = invoiceId;
@@ -419,7 +467,6 @@ function openPaymentModalForInvoice(invoiceId) {
     });
 }
 
-// Load invoices for payment dropdown (filtered by client)
 async function loadInvoicesForPayment(clientId) {
     if (!clientId) {
         paymentInvoiceSelect.innerHTML = '<option value="">Select client first...</option>';
@@ -447,7 +494,6 @@ async function loadInvoicesForPayment(clientId) {
     }
 }
 
-// Update invoice due info when selection changes
 function updateInvoiceDueInfo() {
     const selectedOption = paymentInvoiceSelect.selectedOptions[0];
     const infoEl = document.getElementById('invoice-due-info');
@@ -462,23 +508,19 @@ function updateInvoiceDueInfo() {
     }
 }
 
-// Close payment modal
 function closePaymentModal() {
     paymentModal.classList.add('hidden');
     paymentModal.classList.remove('flex');
     paymentForm.reset();
 }
 
-// Handle client selection change in payment modal
 paymentClientSelect.addEventListener('change', () => {
     loadInvoicesForPayment(paymentClientSelect.value);
     document.getElementById('invoice-due-info').textContent = '';
 });
 
-// Handle invoice selection change
 paymentInvoiceSelect.addEventListener('change', updateInvoiceDueInfo);
 
-// Submit payment form
 paymentForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -515,6 +557,7 @@ paymentForm.addEventListener('submit', async (e) => {
             closePaymentModal();
             loadInvoices();
             loadStats();
+            if (currentView === 'payments') loadPayments();
         } else {
             const error = await response.json();
             alert(`Error: ${error.detail || 'Failed to record payment'}`);
@@ -530,7 +573,6 @@ paymentForm.addEventListener('submit', async (e) => {
 
 // ============ CLIENT DETAIL MODAL ============
 
-// Show client detail
 async function showClientDetail(clientId) {
     if (!clientId) return;
 
@@ -544,15 +586,11 @@ async function showClientDetail(clientId) {
 
         const data = await response.json();
 
-        // Update title
         document.getElementById('client-detail-title').textContent = data.client.name;
-
-        // Update totals
         document.getElementById('client-total-invoiced').textContent = formatCurrency(data.total_invoiced);
         document.getElementById('client-total-paid').textContent = formatCurrency(data.total_paid);
         document.getElementById('client-total-due').textContent = formatCurrency(data.total_due);
 
-        // Populate invoices table
         const invoicesTable = document.getElementById('client-invoices-table');
         if (data.invoices.length === 0) {
             invoicesTable.innerHTML = '<tr><td colspan="6" class="px-4 py-3 text-center text-gray-500">No invoices</td></tr>';
@@ -573,7 +611,6 @@ async function showClientDetail(clientId) {
             `).join('');
         }
 
-        // Populate payments table
         const paymentsTable = document.getElementById('client-payments-table');
         if (data.payments.length === 0) {
             paymentsTable.innerHTML = '<tr><td colspan="5" class="px-4 py-3 text-center text-gray-500">No payments recorded</td></tr>';
@@ -589,7 +626,6 @@ async function showClientDetail(clientId) {
             `).join('');
         }
 
-        // Show modal
         clientDetailModal.classList.remove('hidden');
         clientDetailModal.classList.add('flex');
 
@@ -599,23 +635,38 @@ async function showClientDetail(clientId) {
     }
 }
 
-// Close client detail modal
 function closeClientDetailModal() {
     clientDetailModal.classList.add('hidden');
     clientDetailModal.classList.remove('flex');
     currentClientId = null;
 }
 
-// Close modals on background click
+// ============ KEYBOARD & CLICK HANDLERS ============
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closePdfModal();
+        closeClientModal();
+        closePaymentModal();
+        closeClientDetailModal();
+    }
+});
+
+pdfModal.addEventListener('click', (e) => {
+    if (e.target === pdfModal) closePdfModal();
+});
+clientModal.addEventListener('click', (e) => {
+    if (e.target === clientModal) closeClientModal();
+});
 paymentModal.addEventListener('click', (e) => {
     if (e.target === paymentModal) closePaymentModal();
 });
-
 clientDetailModal.addEventListener('click', (e) => {
     if (e.target === clientDetailModal) closeClientDetailModal();
 });
 
-// Initialize
+// ============ INIT ============
+
 document.addEventListener('DOMContentLoaded', () => {
     loadStats();
     loadInvoices();
