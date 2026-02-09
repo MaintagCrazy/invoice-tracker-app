@@ -105,40 +105,30 @@
         </div>
 
         <!-- Total Outstanding & Client Breakdown -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-medium text-gray-900 mb-4">Total Outstanding</h3>
                 <p class="text-3xl font-bold text-red-600" id="stat-total-outstanding">EUR 0.00</p>
             </div>
-            <div class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Outstanding by Client</h3>
-                <div id="client-breakdown" class="space-y-2">
+            <div class="bg-white rounded-lg shadow p-6 md:col-span-2">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Outstanding by Client</h3>
+                    <button id="show-all-btn" onclick="clearClientFilter()" class="text-sm text-blue-600 hover:underline hidden">
+                        Show All Clients
+                    </button>
+                </div>
+                <div id="client-breakdown" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <!-- Filled by JS -->
                 </div>
             </div>
         </div>
 
-        <!-- Filters -->
+        <!-- Actions Bar -->
         <div class="bg-white rounded-lg shadow p-4 mb-6">
             <div class="flex flex-wrap items-center gap-4">
-                <div>
-                    <label class="text-sm text-gray-600">Status:</label>
-                    <select id="filter-status" class="ml-2 border rounded px-3 py-1">
-                        <option value="">All</option>
-                        <option value="draft">Draft</option>
-                        <option value="sent">Sent</option>
-                        <option value="paid">Paid</option>
-                    </select>
+                <div id="current-filter" class="text-gray-600 hidden">
+                    Showing: <span id="filter-client-name" class="font-medium text-blue-600"></span>
                 </div>
-                <div>
-                    <label class="text-sm text-gray-600">Client:</label>
-                    <select id="filter-client" class="ml-2 border rounded px-3 py-1">
-                        <option value="">All Clients</option>
-                    </select>
-                </div>
-                <button id="clear-filter-btn" onclick="clearClientFilter()" class="text-gray-500 hover:text-gray-700 hidden">
-                    <i class="fas fa-times-circle"></i> Clear
-                </button>
                 <div class="flex-1"></div>
                 <button onclick="openPaymentModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 mr-2">
                     <i class="fas fa-plus mr-2"></i>Add Payment
@@ -148,6 +138,10 @@
                 </a>
             </div>
         </div>
+
+        <!-- Hidden filter elements for compatibility -->
+        <select id="filter-status" class="hidden"><option value="">All</option></select>
+        <select id="filter-client" class="hidden"><option value="">All</option></select>
 
         <!-- Invoice Table -->
         <div class="bg-white rounded-lg shadow overflow-hidden">
@@ -159,16 +153,15 @@
                         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
                         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
                         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
-                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Due</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Outstanding</th>
                         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payment</th>
-                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"></th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200" id="invoice-table">
                     <tr>
-                        <td colspan="10" class="px-4 py-4 text-center text-gray-500">Loading...</td>
+                        <td colspan="9" class="px-4 py-4 text-center text-gray-500">Loading...</td>
                     </tr>
                 </tbody>
             </table>

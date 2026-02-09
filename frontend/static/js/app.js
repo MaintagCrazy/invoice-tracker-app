@@ -51,22 +51,33 @@ async function loadStats() {
         document.getElementById('stat-received').textContent = formatCurrency(stats.total_paid || 0);
         document.getElementById('stat-total-outstanding').textContent = formatCurrency(stats.total_due || 0);
 
-        // Client breakdown - show outstanding amounts only
+        // Client breakdown - show all clients as clickable cards
         const breakdown = document.getElementById('client-breakdown');
         const dueByClient = stats.due_by_client || {};
-        const clientsWithDue = Object.entries(dueByClient).filter(([_, due]) => due > 0);
+        const totalByClient = stats.total_by_client || {};
 
-        if (clientsWithDue.length === 0) {
-            breakdown.innerHTML = '<p class="text-green-600 font-medium">All invoices paid!</p>';
+        // Get all clients, sorted by outstanding amount descending
+        const allClients = Object.keys(totalByClient);
+        const sortedClients = allClients.sort((a, b) => (dueByClient[b] || 0) - (dueByClient[a] || 0));
+
+        if (sortedClients.length === 0) {
+            breakdown.innerHTML = '<p class="text-gray-500">No clients yet</p>';
         } else {
-            breakdown.innerHTML = clientsWithDue
-                .sort((a, b) => b[1] - a[1])  // Sort by due amount descending
-                .map(([client, due]) => `
-                    <div class="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded" onclick="filterByClientName('${client.replace(/'/g, "\\'")}')">
-                        <span class="text-blue-600 hover:underline">${client}</span>
-                        <span class="font-medium text-red-600">${formatCurrency(due)}</span>
+            breakdown.innerHTML = sortedClients.map(client => {
+                const due = dueByClient[client] || 0;
+                const isPaid = due === 0;
+                const bgColor = isPaid ? 'bg-gray-100' : 'bg-red-50 border-red-200';
+                const textColor = isPaid ? 'text-gray-500' : 'text-red-600';
+                const statusText = isPaid ? 'Paid' : formatCurrency(due);
+
+                return `
+                    <div class="p-3 rounded-lg border ${bgColor} cursor-pointer hover:shadow-md transition-shadow"
+                         onclick="filterByClientName('${client.replace(/'/g, "\\'")}')">
+                        <div class="font-medium text-gray-900 truncate">${client}</div>
+                        <div class="text-lg font-bold ${textColor}">${statusText}</div>
                     </div>
-                `).join('');
+                `;
+            }).join('');
         }
     } catch (error) {
         console.error('Error loading stats:', error);
@@ -89,7 +100,7 @@ async function loadInvoices() {
         renderInvoices();
     } catch (error) {
         console.error('Error loading invoices:', error);
-        invoiceTable.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-red-500">Error loading invoices</td></tr>';
+        invoiceTable.innerHTML = '<tr><td colspan="9" class="px-6 py-4 text-center text-red-500">Error loading invoices</td></tr>';
     }
 }
 
@@ -107,7 +118,7 @@ function renderInvoices() {
     if (invoices.length === 0) {
         invoiceTable.innerHTML = `
             <tr>
-                <td colspan="10" class="px-4 py-8 text-center text-gray-500">
+                <td colspan="9" class="px-4 py-8 text-center text-gray-500">
                     <i class="fas fa-file-invoice text-4xl mb-3 text-gray-300"></i>
                     <p>No invoices found</p>
                     <a href="/chat" class="text-blue-600 hover:underline">Create your first invoice</a>
@@ -117,13 +128,17 @@ function renderInvoices() {
         return;
     }
 
-    invoiceTable.innerHTML = invoices.map(inv => `
-        <tr class="hover:bg-gray-50">
+    invoiceTable.innerHTML = invoices.map(inv => {
+        const isPaid = inv.payment_status === 'paid' || inv.amount_due === 0;
+        const rowClass = isPaid ? 'bg-gray-100 text-gray-500' : 'hover:bg-gray-50';
+
+        return `
+        <tr class="${rowClass}">
             <td class="px-4 py-3 whitespace-nowrap">
                 <span class="font-medium">${inv.invoice_number}</span>
             </td>
             <td class="px-4 py-3">
-                <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="text-blue-600 hover:text-blue-800 hover:underline text-left">
+                <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="${isPaid ? 'text-gray-600' : 'text-blue-600 hover:text-blue-800'} hover:underline text-left">
                     ${inv.client?.name || '-'}
                 </button>
             </td>
@@ -135,24 +150,19 @@ function renderInvoices() {
             <td class="px-4 py-3 whitespace-nowrap font-medium">
                 ${formatCurrency(inv.amount, inv.currency)}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap text-green-600">
+            <td class="px-4 py-3 whitespace-nowrap ${isPaid ? '' : 'text-green-600'}">
                 ${formatCurrency(inv.amount_paid || 0, inv.currency)}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap ${inv.amount_due > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}">
-                ${formatCurrency(inv.amount_due || 0, inv.currency)}
+            <td class="px-4 py-3 whitespace-nowrap ${inv.amount_due > 0 ? 'text-red-600 font-bold' : ''}">
+                ${inv.amount_due > 0 ? formatCurrency(inv.amount_due, inv.currency) : '-'}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap text-gray-500">
+            <td class="px-4 py-3 whitespace-nowrap">
                 ${formatDate(inv.issue_date)}
             </td>
             <td class="px-4 py-3 whitespace-nowrap">
-                <span class="px-2 py-1 rounded-full text-xs font-medium status-${inv.status}">
-                    ${inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}
-                </span>
-            </td>
-            <td class="px-4 py-3 whitespace-nowrap">
-                <span class="px-2 py-1 rounded-full text-xs font-medium ${getPaymentStatusClass(inv.payment_status)}">
-                    ${(inv.payment_status || 'unpaid').charAt(0).toUpperCase() + (inv.payment_status || 'unpaid').slice(1)}
-                </span>
+                ${isPaid ? '<span class="text-green-600 font-medium">Paid</span>' :
+                  inv.amount_due > 0 ? `<span class="text-red-600 font-medium">Due ${formatCurrency(inv.amount_due, inv.currency)}</span>` :
+                  `<span class="px-2 py-1 rounded-full text-xs font-medium status-${inv.status}">${inv.status}</span>`}
             </td>
             <td class="px-4 py-3 whitespace-nowrap">
                 <div class="flex items-center space-x-2">
@@ -172,7 +182,8 @@ function renderInvoices() {
                 </div>
             </td>
         </tr>
-    `).join('');
+        `;
+    }).join('');
 }
 
 // Load clients for filter
@@ -313,20 +324,29 @@ clientForm.addEventListener('submit', async (e) => {
     }
 });
 
+// Current filter state
+let currentClientFilter = null;
+
 // Filter change handlers
 filterStatus.addEventListener('change', loadInvoices);
 filterClient.addEventListener('change', () => {
-    updateClearFilterButton();
+    updateFilterUI();
     loadInvoices();
 });
 
-// Update clear filter button visibility
-function updateClearFilterButton() {
-    const clearBtn = document.getElementById('clear-filter-btn');
-    if (filterClient.value) {
-        clearBtn.classList.remove('hidden');
+// Update filter UI elements
+function updateFilterUI() {
+    const showAllBtn = document.getElementById('show-all-btn');
+    const currentFilter = document.getElementById('current-filter');
+    const filterClientName = document.getElementById('filter-client-name');
+
+    if (currentClientFilter) {
+        showAllBtn.classList.remove('hidden');
+        currentFilter.classList.remove('hidden');
+        filterClientName.textContent = currentClientFilter;
     } else {
-        clearBtn.classList.add('hidden');
+        showAllBtn.classList.add('hidden');
+        currentFilter.classList.add('hidden');
     }
 }
 
@@ -336,7 +356,8 @@ function filterByClientName(clientName) {
     const client = clients.find(c => c.name === clientName);
     if (client) {
         filterClient.value = client.id;
-        updateClearFilterButton();
+        currentClientFilter = clientName;
+        updateFilterUI();
         loadInvoices();
     }
 }
@@ -344,7 +365,8 @@ function filterByClientName(clientName) {
 // Clear client filter
 function clearClientFilter() {
     filterClient.value = '';
-    updateClearFilterButton();
+    currentClientFilter = null;
+    updateFilterUI();
     loadInvoices();
 }
 
