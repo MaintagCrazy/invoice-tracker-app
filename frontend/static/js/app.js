@@ -444,6 +444,27 @@ function updateFilterUI() {
     }
 }
 
+// ============ MOBILE ACTION MENU ============
+
+function toggleActionMenu() {
+    const menu = document.getElementById('mobile-action-menu');
+    const icon = document.getElementById('mnav-add-icon');
+    if (menu.classList.contains('hidden')) {
+        menu.classList.remove('hidden');
+        icon.className = 'fas fa-times';
+    } else {
+        menu.classList.add('hidden');
+        icon.className = 'fas fa-plus';
+    }
+}
+
+function closeActionMenu() {
+    const menu = document.getElementById('mobile-action-menu');
+    const icon = document.getElementById('mnav-add-icon');
+    menu.classList.add('hidden');
+    icon.className = 'fas fa-plus';
+}
+
 // ============ PDF PREVIEW ============
 
 function previewInvoice(invoiceId) {

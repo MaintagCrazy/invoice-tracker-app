@@ -286,6 +286,19 @@
         </div>
     </main>
 
+    <!-- Mobile: Quick Action Menu (above nav) -->
+    <div id="mobile-action-menu" class="mobile-only hidden" style="position:fixed; bottom:80px; left:50%; transform:translateX(-50%); z-index:60; background:#1f2937; border-radius:16px; padding:8px; box-shadow:0 8px 30px rgba(0,0,0,0.3); min-width:200px;">
+        <a href="/chat" style="display:flex; align-items:center; gap:12px; padding:12px 16px; color:white; text-decoration:none; border-radius:12px;" onclick="closeActionMenu()">
+            <i class="fas fa-robot" style="width:20px; text-align:center; color:#60a5fa;"></i>
+            <span style="font-size:15px;">New Invoice (AI)</span>
+        </a>
+        <div style="height:1px; background:#374151; margin:0 8px;"></div>
+        <button onclick="closeActionMenu(); openPaymentModal();" style="display:flex; align-items:center; gap:12px; padding:12px 16px; color:white; border:none; background:none; width:100%; text-align:left; border-radius:12px; cursor:pointer;">
+            <i class="fas fa-coins" style="width:20px; text-align:center; color:#34d399;"></i>
+            <span style="font-size:15px;">Record Payment</span>
+        </button>
+    </div>
+
     <!-- Mobile: Floating Pill Nav (Marbily style) -->
     <div class="floating-nav mobile-only" id="mobile-nav">
         <button id="mnav-invoices" class="active" onclick="mobileNav('invoices')">
@@ -297,8 +310,8 @@
         <button id="mnav-payments" onclick="mobileNav('payments')">
             <i class="fas fa-coins"></i>
         </button>
-        <button id="mnav-add" onclick="openPaymentModal()">
-            <i class="fas fa-plus"></i>
+        <button id="mnav-add" onclick="toggleActionMenu()">
+            <i class="fas fa-plus" id="mnav-add-icon"></i>
         </button>
     </div>
 
