@@ -101,7 +101,7 @@
                 <div class="flex items-center space-x-4">
                     <a href="/" class="text-blue-600 font-medium">Dashboard</a>
                     <a href="/chat" class="text-gray-600 hover:text-blue-600">+ New Invoice</a>
-                    <a href="https://drive.google.com" target="_blank" class="text-gray-600 hover:text-blue-600"><i class="fab fa-google-drive mr-1"></i>Google Drive</a>
+                    <a href="#" onclick="showDriveView(); return false;" class="text-gray-600 hover:text-blue-600"><i class="fab fa-google-drive mr-1"></i>Google Drive</a>
                 </div>
             </div>
         </div>
@@ -285,6 +285,27 @@
         <div id="mobile-clients-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
             <div id="mobile-client-list" class="divide-y divide-gray-100"></div>
         </div>
+
+        <!-- Mobile: Drive Files View -->
+        <div id="mobile-drive-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
+            <div id="mobile-drive-list" class="divide-y divide-gray-100">
+                <div class="px-4 py-8 text-center text-gray-400">Loading files...</div>
+            </div>
+        </div>
+
+        <!-- Desktop: Drive Files View -->
+        <div id="drive-files-view" class="bg-white rounded-lg shadow hidden desktop-only">
+            <div class="px-4 py-3 border-b flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i class="fab fa-google-drive text-blue-500"></i>
+                    <span class="font-medium text-gray-900">Invoice PDFs</span>
+                </div>
+                <span id="drive-file-count" class="text-sm text-gray-500"></span>
+            </div>
+            <div id="desktop-drive-list" class="divide-y divide-gray-100">
+                <div class="px-4 py-8 text-center text-gray-400">Loading files...</div>
+            </div>
+        </div>
     </main>
 
     <!-- Mobile: Quick Action Menu (above nav) -->
@@ -311,7 +332,7 @@
         <button id="mnav-payments" onclick="mobileNav('payments')">
             <i class="fas fa-coins"></i>
         </button>
-        <button id="mnav-drive" onclick="window.open('https://drive.google.com','_blank')">
+        <button id="mnav-drive" onclick="mobileNav('drive')">
             <i class="fab fa-google-drive"></i>
         </button>
         <button id="mnav-add" onclick="toggleActionMenu()">

@@ -51,6 +51,7 @@ function showInvoicesView() {
     currentView = 'invoices';
     document.getElementById('invoices-view').classList.remove('hidden');
     document.getElementById('payments-view').classList.add('hidden');
+    document.getElementById('drive-files-view').classList.add('hidden');
     document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-blue-600 text-white rounded-lg font-medium';
     document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
 }
@@ -59,9 +60,20 @@ function showPaymentsView() {
     currentView = 'payments';
     document.getElementById('invoices-view').classList.add('hidden');
     document.getElementById('payments-view').classList.remove('hidden');
+    document.getElementById('drive-files-view').classList.add('hidden');
     document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
     document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-blue-600 text-white rounded-lg font-medium';
     loadPayments();
+}
+
+function showDriveView() {
+    currentView = 'drive';
+    document.getElementById('invoices-view').classList.add('hidden');
+    document.getElementById('payments-view').classList.add('hidden');
+    document.getElementById('drive-files-view').classList.remove('hidden');
+    document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
+    document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
+    loadDriveFiles();
 }
 
 // Mobile navigation
@@ -79,10 +91,12 @@ function mobileNav(view) {
     const mInv = document.getElementById('mobile-invoices-view');
     const mPay = document.getElementById('mobile-payments-view');
     const mCli = document.getElementById('mobile-clients-view');
+    const mDrv = document.getElementById('mobile-drive-view');
 
     mInv.classList.add('hidden');
     mPay.classList.add('hidden');
     mCli.classList.add('hidden');
+    mDrv.classList.add('hidden');
 
     if (view === 'invoices') {
         mInv.classList.remove('hidden');
@@ -95,6 +109,10 @@ function mobileNav(view) {
         mCli.classList.remove('hidden');
         document.querySelector('.mobile-only.bg-white.border-b span').textContent = 'Clients';
         renderMobileClients();
+    } else if (view === 'drive') {
+        mDrv.classList.remove('hidden');
+        document.querySelector('.mobile-only.bg-white.border-b span').textContent = 'Google Drive';
+        loadDriveFiles();
     }
 }
 
@@ -818,6 +836,84 @@ paymentModal.addEventListener('click', (e) => {
 clientDetailModal.addEventListener('click', (e) => {
     if (e.target === clientDetailModal) closeClientDetailModal();
 });
+
+// ============ DRIVE FILES ============
+
+async function loadDriveFiles() {
+    try {
+        const response = await fetch(`${API_BASE}/api/invoices/`);
+        const invoices = await response.json();
+
+        // Sort by file number descending
+        invoices.sort((a, b) => b.file_number - a.file_number);
+
+        // Render mobile view
+        const mobileList = document.getElementById('mobile-drive-list');
+        // Render desktop view
+        const desktopList = document.getElementById('desktop-drive-list');
+        const countEl = document.getElementById('drive-file-count');
+
+        if (countEl) countEl.textContent = `${invoices.length} invoices`;
+
+        const renderFileItem = (inv, isMobile) => {
+            const fileName = inv.drive_file_id || `Faktura ${inv.file_number}.pdf`;
+            const clientName = inv.client ? inv.client.name : '';
+            const amount = `${inv.currency} ${inv.amount.toLocaleString('en', {minimumFractionDigits: 2})}`;
+            const date = inv.issue_date || '';
+
+            if (isMobile) {
+                return `
+                    <div class="px-4 py-3 flex items-center justify-between" onclick="previewInvoice(${inv.id})" style="cursor:pointer">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center">
+                                <i class="fas fa-file-pdf text-red-500 text-sm"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-sm font-medium text-gray-900 truncate">Faktura ${inv.file_number} — ${clientName}</p>
+                                <p class="text-xs text-gray-500">${inv.invoice_number} · ${date} · ${amount}</p>
+                            </div>
+                        </div>
+                        <i class="fas fa-chevron-right text-gray-300 text-xs flex-shrink-0 ml-2"></i>
+                    </div>`;
+            } else {
+                return `
+                    <div class="px-4 py-3 flex items-center justify-between hover:bg-gray-50 cursor-pointer" onclick="previewInvoice(${inv.id})">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center">
+                                <i class="fas fa-file-pdf text-red-500"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-gray-900">Faktura ${inv.file_number} — ${clientName}</p>
+                                <p class="text-xs text-gray-500">${inv.invoice_number} · ${date}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="text-sm font-medium text-gray-700">${amount}</span>
+                            <a href="${API_BASE}/api/invoices/${inv.id}/download" class="text-blue-500 hover:text-blue-700" onclick="event.stopPropagation()" title="Download"><i class="fas fa-download"></i></a>
+                        </div>
+                    </div>`;
+            }
+        };
+
+        if (mobileList) {
+            mobileList.innerHTML = invoices.length
+                ? invoices.map(inv => renderFileItem(inv, true)).join('')
+                : '<div class="px-4 py-8 text-center text-gray-400">No invoice files yet</div>';
+        }
+        if (desktopList) {
+            desktopList.innerHTML = invoices.length
+                ? invoices.map(inv => renderFileItem(inv, false)).join('')
+                : '<div class="px-4 py-8 text-center text-gray-400">No invoice files yet</div>';
+        }
+    } catch (err) {
+        console.error('Error loading drive files:', err);
+        const msg = '<div class="px-4 py-8 text-center text-red-500">Error loading files</div>';
+        const m = document.getElementById('mobile-drive-list');
+        const d = document.getElementById('desktop-drive-list');
+        if (m) m.innerHTML = msg;
+        if (d) d.innerHTML = msg;
+    }
+}
 
 // ============ INIT ============
 
