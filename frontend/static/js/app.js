@@ -42,6 +42,9 @@ function formatDate(dateStr) {
     return date.toLocaleDateString('de-DE');
 }
 
+// ============ MOBILE DETECTION ============
+const isMobile = () => window.innerWidth < 768;
+
 // ============ VIEW SWITCHING ============
 
 function showInvoicesView() {
@@ -61,6 +64,40 @@ function showPaymentsView() {
     loadPayments();
 }
 
+// Mobile navigation
+let mobileCurrentView = 'invoices';
+
+function mobileNav(view) {
+    mobileCurrentView = view;
+
+    // Update nav buttons
+    document.querySelectorAll('.floating-nav button').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById('mnav-' + view);
+    if (btn) btn.classList.add('active');
+
+    // Toggle views
+    const mInv = document.getElementById('mobile-invoices-view');
+    const mPay = document.getElementById('mobile-payments-view');
+    const mCli = document.getElementById('mobile-clients-view');
+
+    mInv.classList.add('hidden');
+    mPay.classList.add('hidden');
+    mCli.classList.add('hidden');
+
+    if (view === 'invoices') {
+        mInv.classList.remove('hidden');
+        document.querySelector('.mobile-only.bg-white.border-b span').textContent = 'Invoices';
+    } else if (view === 'payments') {
+        mPay.classList.remove('hidden');
+        document.querySelector('.mobile-only.bg-white.border-b span').textContent = 'Payments';
+        loadPayments();
+    } else if (view === 'clients') {
+        mCli.classList.remove('hidden');
+        document.querySelector('.mobile-only.bg-white.border-b span').textContent = 'Clients';
+        renderMobileClients();
+    }
+}
+
 // ============ STATS ============
 
 async function loadStats() {
@@ -75,6 +112,10 @@ async function loadStats() {
         document.getElementById('stat-due').textContent = formatCurrency(stats.total_due || 0);
         document.getElementById('stat-received').textContent = formatCurrency(stats.total_paid || 0);
         document.getElementById('stat-total-outstanding').textContent = formatCurrency(stats.total_due || 0);
+
+        // Mobile outstanding
+        const mobileOut = document.getElementById('mobile-outstanding');
+        if (mobileOut) mobileOut.textContent = stats.total_due > 0 ? formatCurrency(stats.total_due) + ' due' : '';
 
         // Client breakdown - vertical list
         const breakdown = document.getElementById('client-breakdown');
@@ -128,6 +169,7 @@ async function loadInvoices() {
         const response = await fetch(url);
         invoices = await response.json();
         renderInvoices();
+        renderMobileInvoices();
     } catch (error) {
         console.error('Error loading invoices:', error);
         invoiceTable.innerHTML = '<tr><td colspan="9" class="px-6 py-4 text-center text-red-500">Error loading invoices</td></tr>';
@@ -163,59 +205,131 @@ function renderInvoices() {
 
         return `
         <tr class="${rowBg} hover:bg-gray-50">
-            <td class="px-4 py-3 whitespace-nowrap">
+            <td class="col-inv px-3 py-3 text-sm truncate">
                 <span class="font-medium ${textMuted}">${inv.invoice_number}</span>
             </td>
-            <td class="px-4 py-3 whitespace-nowrap">
-                <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="${isPaid ? 'text-gray-500' : 'text-blue-600 hover:text-blue-800'} hover:underline text-left">
+            <td class="col-client px-3 py-3 text-sm truncate">
+                <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="${isPaid ? 'text-gray-500' : 'text-blue-600 hover:text-blue-800'} hover:underline text-left truncate block w-full">
                     ${inv.client?.name || '-'}
                 </button>
             </td>
-            <td class="px-4 py-3 ${textMuted}">
-                <span class="truncate block max-w-xs" title="${inv.description || ''}">
-                    ${inv.description || '-'}
-                </span>
+            <td class="col-desc px-3 py-3 text-sm ${textMuted} truncate" title="${(inv.description || '').replace(/"/g, '&quot;')}">
+                ${inv.description || '-'}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap font-medium ${textMuted}">
+            <td class="col-amount px-3 py-3 text-sm font-medium ${textMuted} truncate">
                 ${formatCurrency(inv.amount, inv.currency)}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap ${isPaid ? 'text-gray-400' : 'text-green-600'}">
+            <td class="col-paid px-3 py-3 text-sm ${isPaid ? 'text-gray-400' : 'text-green-600'} truncate">
                 ${formatCurrency(inv.amount_paid || 0, inv.currency)}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap ${inv.amount_due > 0 ? 'text-red-600 font-bold' : textMuted}">
+            <td class="col-outstanding px-3 py-3 text-sm ${inv.amount_due > 0 ? 'text-red-600 font-bold' : textMuted} truncate">
                 ${inv.amount_due > 0 ? formatCurrency(inv.amount_due, inv.currency) : '-'}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap ${textMuted}">
+            <td class="col-date px-3 py-3 text-sm ${textMuted} truncate">
                 ${formatDate(inv.issue_date)}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap">
+            <td class="col-status px-3 py-3 text-sm">
                 ${isPaid
-                    ? '<span class="text-green-600 font-medium text-sm">Paid</span>'
+                    ? '<span class="text-green-600 font-medium">Paid</span>'
                     : inv.amount_due > 0
-                        ? '<span class="text-red-600 font-medium text-sm">Outstanding</span>'
-                        : `<span class="px-2 py-1 rounded-full text-xs font-medium status-${inv.status}">${inv.status}</span>`
+                        ? '<span class="text-red-600 font-medium">Due</span>'
+                        : `<span class="text-gray-500">${inv.status}</span>`
                 }
             </td>
-            <td class="px-4 py-3 whitespace-nowrap">
-                <div class="flex items-center space-x-2">
-                    <button onclick="previewInvoice(${inv.id})" class="text-blue-600 hover:text-blue-800" title="Preview">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                    ${inv.status === 'draft' ? `
-                        <button onclick="previewAndSend(${inv.id})" class="text-green-600 hover:text-green-800" title="Send">
-                            <i class="fas fa-paper-plane"></i>
-                        </button>
-                    ` : ''}
-                    ${inv.amount_due > 0 ? `
-                        <button onclick="openPaymentModalForInvoice(${inv.id})" class="text-green-600 hover:text-green-800" title="Add Payment">
-                            <i class="fas fa-plus-circle"></i>
-                        </button>
-                    ` : ''}
-                </div>
+            <td class="col-actions px-2 py-3">
+                <button onclick="previewInvoice(${inv.id})" class="text-blue-600 hover:text-blue-800" title="Preview">
+                    <i class="fas fa-eye text-xs"></i>
+                </button>
             </td>
         </tr>
         `;
     }).join('');
+}
+
+// ============ MOBILE RENDERERS ============
+
+function renderMobileInvoices() {
+    const list = document.getElementById('mobile-invoice-list');
+    if (!list) return;
+
+    if (invoices.length === 0) {
+        list.innerHTML = '<div class="px-4 py-8 text-center text-gray-400">No invoices found</div>';
+        return;
+    }
+
+    list.innerHTML = invoices.map(inv => {
+        const isPaid = inv.payment_status === 'paid' || (inv.amount_due !== undefined && inv.amount_due <= 0);
+        return `
+        <div class="invoice-card ${isPaid ? 'paid-card' : ''}" onclick="previewInvoice(${inv.id})">
+            <div style="min-width:0; flex:1">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400">${inv.invoice_number}</span>
+                    ${isPaid ? '<span class="text-xs text-green-600 font-medium">Paid</span>' : ''}
+                </div>
+                <div class="font-medium text-gray-900 text-sm truncate">${inv.client?.name || '-'}</div>
+            </div>
+            <div class="text-right flex-shrink-0 ml-3">
+                <div class="text-sm ${isPaid ? 'text-gray-400' : 'text-green-600'}">${formatCurrency(inv.amount_paid || 0)}</div>
+                ${inv.amount_due > 0
+                    ? `<div class="text-sm font-bold text-red-600">${formatCurrency(inv.amount_due)}</div>`
+                    : '<div class="text-xs text-gray-400">-</div>'
+                }
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderMobilePayments() {
+    const list = document.getElementById('mobile-payments-list');
+    if (!list) return;
+
+    if (payments.length === 0) {
+        list.innerHTML = '<div class="px-4 py-8 text-center text-gray-400">No payments recorded</div>';
+        return;
+    }
+
+    list.innerHTML = payments.map(p => `
+        <div class="invoice-card">
+            <div style="min-width:0; flex:1">
+                <div class="text-xs text-gray-400">${p.date || '-'}</div>
+                <div class="font-medium text-gray-900 text-sm truncate">${p.client || '-'}</div>
+                <div class="text-xs text-gray-400">${p.method || ''} ${p.notes ? '- ' + p.notes : ''}</div>
+            </div>
+            <div class="text-right flex-shrink-0 ml-3">
+                <div class="text-sm font-bold text-green-600">${formatCurrency(p.amount, p.currency)}</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderMobileClients() {
+    const list = document.getElementById('mobile-client-list');
+    if (!list) return;
+
+    // Use cached stats from loadStats
+    fetch(`${API_BASE}/api/invoices/stats`).then(r => r.json()).then(stats => {
+        const dueByClient = stats.due_by_client || {};
+        const totalByClient = stats.total_by_client || {};
+        const allClients = Object.keys({...dueByClient, ...totalByClient});
+        const sorted = allClients.sort((a, b) => (dueByClient[b] || 0) - (dueByClient[a] || 0));
+
+        list.innerHTML = sorted.map(client => {
+            const due = dueByClient[client] || 0;
+            const isPaid = due === 0;
+            const isActive = currentClientFilter === client;
+
+            return `
+            <div class="px-4 py-3 flex justify-between items-center cursor-pointer ${isActive ? 'bg-blue-50' : ''}" onclick="filterByClientName('${client.replace(/'/g, "\\'")}'); mobileNav('invoices');">
+                <div class="flex items-center gap-2">
+                    ${isActive ? '<i class="fas fa-chevron-right text-blue-500 text-xs"></i>' : '<i class="fas fa-building text-gray-300 text-xs"></i>'}
+                    <span class="${isActive ? 'font-semibold text-blue-700' : 'text-gray-900'} text-sm">${client}</span>
+                </div>
+                <span class="${isPaid ? 'text-gray-400 text-xs' : 'font-semibold text-red-600 text-sm'}">
+                    ${isPaid ? 'Paid' : formatCurrency(due)}
+                </span>
+            </div>`;
+        }).join('');
+    });
 }
 
 // ============ PAYMENTS VIEW ============
@@ -230,6 +344,7 @@ async function loadPayments() {
         const response = await fetch(url);
         payments = await response.json();
         renderPayments();
+        renderMobilePayments();
     } catch (error) {
         console.error('Error loading payments:', error);
         paymentsTable.innerHTML = '<tr><td colspan="6" class="px-4 py-4 text-center text-red-500">Error loading payments</td></tr>';
@@ -302,6 +417,7 @@ function clearClientFilter() {
 }
 
 function updateFilterUI() {
+    // Desktop
     const showAllBtn = document.getElementById('show-all-btn');
     const filterLabel = document.getElementById('current-filter-label');
     const filterName = document.getElementById('filter-client-name');
@@ -313,6 +429,18 @@ function updateFilterUI() {
     } else {
         showAllBtn.classList.add('hidden');
         filterLabel.classList.add('hidden');
+    }
+
+    // Mobile
+    const mobileFilterBar = document.getElementById('mobile-filter-bar');
+    const mobileFilterName = document.getElementById('mobile-filter-name');
+    if (mobileFilterBar) {
+        if (currentClientFilter) {
+            mobileFilterBar.classList.remove('hidden');
+            mobileFilterName.textContent = currentClientFilter;
+        } else {
+            mobileFilterBar.classList.add('hidden');
+        }
     }
 }
 

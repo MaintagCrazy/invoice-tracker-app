@@ -2,25 +2,94 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Invoice Tracker - Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Invoice Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#f9fafb">
     <style>
-        .status-draft { background-color: #fef3c7; color: #92400e; }
-        .status-sent { background-color: #dbeafe; color: #1e40af; }
-        .status-paid { background-color: #d1fae5; color: #065f46; }
-        .payment-unpaid { background-color: #fee2e2; color: #991b1b; }
-        .payment-partial { background-color: #fef3c7; color: #92400e; }
-        .payment-paid { background-color: #d1fae5; color: #065f46; }
         .client-item { transition: all 0.15s ease; }
         .client-item:hover { background-color: #f0f9ff; }
         .client-item.active { background-color: #eff6ff; border-color: #3b82f6; }
+
+        /* Desktop table: fixed layout so columns don't overflow */
+        @media (min-width: 768px) {
+            .invoice-table { table-layout: fixed; width: 100%; }
+            .invoice-table .col-inv { width: 10%; }
+            .invoice-table .col-client { width: 13%; }
+            .invoice-table .col-desc { width: 20%; }
+            .invoice-table .col-amount { width: 12%; }
+            .invoice-table .col-paid { width: 12%; }
+            .invoice-table .col-outstanding { width: 12%; }
+            .invoice-table .col-date { width: 9%; }
+            .invoice-table .col-status { width: 9%; }
+            .invoice-table .col-actions { width: 3%; }
+        }
+
+        /* Mobile: hide elements with .desktop-only */
+        @media (max-width: 767px) {
+            .desktop-only { display: none !important; }
+            body { padding-bottom: 80px; }
+        }
+        @media (min-width: 768px) {
+            .mobile-only { display: none !important; }
+        }
+
+        /* Floating pill nav */
+        .floating-nav {
+            position: fixed;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1f2937;
+            border-radius: 50px;
+            padding: 6px 8px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            z-index: 40;
+        }
+        .floating-nav button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            color: #9ca3af;
+            transition: all 0.2s;
+            border: none;
+            background: none;
+        }
+        .floating-nav button:active { transform: scale(0.92); }
+        .floating-nav button.active {
+            background: #3b82f6;
+            color: white;
+            box-shadow: 0 2px 8px rgba(59,130,246,0.4);
+        }
+        .floating-nav button i { font-size: 18px; }
+
+        /* Mobile card */
+        .invoice-card {
+            padding: 14px 16px;
+            border-bottom: 1px solid #f3f4f6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .invoice-card:active { background: #f9fafb; }
+        .invoice-card.paid-card { background: #f9fafb; opacity: 0.7; }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
-    <!-- Navigation -->
-    <nav class="bg-white shadow-sm border-b">
+    <!-- Desktop Navigation -->
+    <nav class="bg-white shadow-sm border-b desktop-only">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
                 <div class="flex items-center">
@@ -35,15 +104,28 @@
         </div>
     </nav>
 
+    <!-- Mobile Header -->
+    <div class="mobile-only bg-white border-b px-4 py-3">
+        <div class="flex justify-between items-center">
+            <span class="text-lg font-semibold text-gray-900">Invoices</span>
+            <div class="flex items-center space-x-2">
+                <span id="mobile-outstanding" class="text-sm font-bold text-red-600"></span>
+            </div>
+        </div>
+        <!-- Mobile client filter indicator -->
+        <div id="mobile-filter-bar" class="hidden mt-2 flex items-center justify-between bg-blue-50 rounded-lg px-3 py-2">
+            <span class="text-sm text-blue-700"><i class="fas fa-filter mr-1"></i> <span id="mobile-filter-name"></span></span>
+            <button onclick="clearClientFilter()" class="text-blue-600 text-sm font-medium">Clear</button>
+        </div>
+    </div>
+
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
+        <!-- Stats Cards (desktop only) -->
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8 desktop-only">
             <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-2 rounded-full bg-blue-100">
-                        <i class="fas fa-file-invoice text-blue-600 text-sm"></i>
-                    </div>
+                    <div class="p-2 rounded-full bg-blue-100"><i class="fas fa-file-invoice text-blue-600 text-sm"></i></div>
                     <div class="ml-3">
                         <p class="text-xs text-gray-500">Total</p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-total">0</p>
@@ -52,9 +134,7 @@
             </div>
             <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-2 rounded-full bg-yellow-100">
-                        <i class="fas fa-edit text-yellow-600 text-sm"></i>
-                    </div>
+                    <div class="p-2 rounded-full bg-yellow-100"><i class="fas fa-edit text-yellow-600 text-sm"></i></div>
                     <div class="ml-3">
                         <p class="text-xs text-gray-500">Drafts</p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-draft">0</p>
@@ -63,9 +143,7 @@
             </div>
             <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-2 rounded-full bg-blue-100">
-                        <i class="fas fa-paper-plane text-blue-600 text-sm"></i>
-                    </div>
+                    <div class="p-2 rounded-full bg-blue-100"><i class="fas fa-paper-plane text-blue-600 text-sm"></i></div>
                     <div class="ml-3">
                         <p class="text-xs text-gray-500">Sent</p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-sent">0</p>
@@ -74,9 +152,7 @@
             </div>
             <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-2 rounded-full bg-green-100">
-                        <i class="fas fa-check-circle text-green-600 text-sm"></i>
-                    </div>
+                    <div class="p-2 rounded-full bg-green-100"><i class="fas fa-check-circle text-green-600 text-sm"></i></div>
                     <div class="ml-3">
                         <p class="text-xs text-gray-500">Paid</p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-paid">0</p>
@@ -85,9 +161,7 @@
             </div>
             <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex items-center">
-                    <div class="p-2 rounded-full bg-red-100">
-                        <i class="fas fa-exclamation-circle text-red-600 text-sm"></i>
-                    </div>
+                    <div class="p-2 rounded-full bg-red-100"><i class="fas fa-exclamation-circle text-red-600 text-sm"></i></div>
                     <div class="ml-3">
                         <p class="text-xs text-gray-500">Due</p>
                         <p class="text-lg font-semibold text-red-600" id="stat-due">EUR 0</p>
@@ -96,9 +170,7 @@
             </div>
             <div class="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="showPaymentsView()">
                 <div class="flex items-center">
-                    <div class="p-2 rounded-full bg-green-100">
-                        <i class="fas fa-coins text-green-600 text-sm"></i>
-                    </div>
+                    <div class="p-2 rounded-full bg-green-100"><i class="fas fa-coins text-green-600 text-sm"></i></div>
                     <div class="ml-3">
                         <p class="text-xs text-gray-500">Received</p>
                         <p class="text-lg font-semibold text-green-600" id="stat-received">EUR 0</p>
@@ -107,8 +179,8 @@
             </div>
         </div>
 
-        <!-- Total Outstanding & Client List -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <!-- Total Outstanding & Client List (desktop) -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 desktop-only">
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-medium text-gray-900 mb-2">Total Outstanding</h3>
                 <p class="text-3xl font-bold text-red-600" id="stat-total-outstanding">EUR 0.00</p>
@@ -120,21 +192,15 @@
                         <i class="fas fa-times mr-1"></i>Clear filter
                     </button>
                 </div>
-                <div id="client-breakdown" class="space-y-1">
-                    <!-- Filled by JS as a vertical list -->
-                </div>
+                <div id="client-breakdown" class="space-y-1"></div>
             </div>
         </div>
 
-        <!-- Action Bar -->
-        <div class="flex items-center justify-between mb-4">
+        <!-- Action Bar (desktop) -->
+        <div class="flex items-center justify-between mb-4 desktop-only">
             <div class="flex items-center space-x-3">
-                <button id="view-invoices-btn" onclick="showInvoicesView()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium">
-                    Invoices
-                </button>
-                <button id="view-payments-btn" onclick="showPaymentsView()" class="px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50">
-                    Payments
-                </button>
+                <button id="view-invoices-btn" onclick="showInvoicesView()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium">Invoices</button>
+                <button id="view-payments-btn" onclick="showPaymentsView()" class="px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50">Payments</button>
                 <span id="current-filter-label" class="text-gray-500 hidden">
                     | Showing: <span id="filter-client-name" class="font-semibold text-blue-600"></span>
                 </span>
@@ -153,73 +219,100 @@
         <select id="filter-status" class="hidden"><option value="">All</option></select>
         <select id="filter-client" class="hidden"><option value="">All</option></select>
 
-        <!-- Invoice Table View -->
-        <div id="invoices-view" class="bg-white rounded-lg shadow">
+        <!-- Desktop: Invoice Table View -->
+        <div id="invoices-view" class="bg-white rounded-lg shadow desktop-only">
             <div class="overflow-x-auto">
-                <table class="w-full divide-y divide-gray-200">
+                <table class="invoice-table w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Invoice #</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Client</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Description</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Amount</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Paid</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Outstanding</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Date</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Status</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap w-20"></th>
+                            <th class="col-inv px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
+                            <th class="col-client px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
+                            <th class="col-desc px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                            <th class="col-amount px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th class="col-paid px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
+                            <th class="col-outstanding px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Outstanding</th>
+                            <th class="col-date px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="col-status px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th class="col-actions px-2 py-3"></th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200" id="invoice-table">
-                        <tr>
-                            <td colspan="9" class="px-4 py-4 text-center text-gray-500">Loading...</td>
-                        </tr>
+                        <tr><td colspan="9" class="px-4 py-4 text-center text-gray-500">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <!-- Payments Table View (hidden by default) -->
-        <div id="payments-view" class="bg-white rounded-lg shadow hidden">
+        <!-- Desktop: Payments Table View -->
+        <div id="payments-view" class="bg-white rounded-lg shadow hidden desktop-only">
             <div class="overflow-x-auto">
                 <table class="w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Date</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Client</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Invoice #</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Amount</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Method</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Notes</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200" id="payments-table">
-                        <tr>
-                            <td colspan="6" class="px-4 py-4 text-center text-gray-500">Loading...</td>
-                        </tr>
+                        <tr><td colspan="6" class="px-4 py-4 text-center text-gray-500">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
+
+        <!-- Mobile: Invoice Card List -->
+        <div id="mobile-invoices-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4">
+            <div id="mobile-invoice-list">
+                <div class="px-4 py-8 text-center text-gray-400">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Mobile: Payments Card List -->
+        <div id="mobile-payments-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
+            <div id="mobile-payments-list">
+                <div class="px-4 py-8 text-center text-gray-400">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Mobile: Clients View -->
+        <div id="mobile-clients-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
+            <div id="mobile-client-list" class="divide-y divide-gray-100"></div>
+        </div>
     </main>
+
+    <!-- Mobile: Floating Pill Nav (Marbily style) -->
+    <div class="floating-nav mobile-only" id="mobile-nav">
+        <button id="mnav-invoices" class="active" onclick="mobileNav('invoices')">
+            <i class="fas fa-file-invoice"></i>
+        </button>
+        <button id="mnav-clients" onclick="mobileNav('clients')">
+            <i class="fas fa-building"></i>
+        </button>
+        <button id="mnav-payments" onclick="mobileNav('payments')">
+            <i class="fas fa-coins"></i>
+        </button>
+        <button id="mnav-add" onclick="openPaymentModal()">
+            <i class="fas fa-plus"></i>
+        </button>
+    </div>
 
     <!-- PDF Preview Modal -->
     <div id="pdf-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl h-5/6 m-4 flex flex-col">
             <div class="flex justify-between items-center p-4 border-b">
                 <h3 class="text-lg font-medium">Invoice Preview</h3>
-                <button onclick="closePdfModal()" class="text-gray-400 hover:text-gray-600">
-                    <i class="fas fa-times text-xl"></i>
-                </button>
+                <button onclick="closePdfModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <div class="flex-1 p-4">
                 <iframe id="pdf-frame" class="w-full h-full border rounded"></iframe>
             </div>
             <div class="p-4 border-t flex justify-end space-x-3">
                 <button onclick="closePdfModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Close</button>
-                <button id="send-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                    <i class="fas fa-paper-plane mr-2"></i>Send Invoice
-                </button>
+                <button id="send-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"><i class="fas fa-paper-plane mr-2"></i>Send Invoice</button>
             </div>
         </div>
     </div>
@@ -229,27 +322,13 @@
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md m-4">
             <div class="flex justify-between items-center p-4 border-b">
                 <h3 class="text-lg font-medium">Add New Client</h3>
-                <button onclick="closeClientModal()" class="text-gray-400 hover:text-gray-600">
-                    <i class="fas fa-times text-xl"></i>
-                </button>
+                <button onclick="closeClientModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <form id="client-form" class="p-4 space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Company Name *</label>
-                    <input type="text" name="name" required class="mt-1 w-full border rounded px-3 py-2">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Address *</label>
-                    <textarea name="address" required rows="2" class="mt-1 w-full border rounded px-3 py-2"></textarea>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Company ID (VAT/Tax) *</label>
-                    <input type="text" name="company_id" required class="mt-1 w-full border rounded px-3 py-2">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Email (optional)</label>
-                    <input type="email" name="email" class="mt-1 w-full border rounded px-3 py-2">
-                </div>
+                <div><label class="block text-sm font-medium text-gray-700">Company Name *</label><input type="text" name="name" required class="mt-1 w-full border rounded px-3 py-2"></div>
+                <div><label class="block text-sm font-medium text-gray-700">Address *</label><textarea name="address" required rows="2" class="mt-1 w-full border rounded px-3 py-2"></textarea></div>
+                <div><label class="block text-sm font-medium text-gray-700">Company ID (VAT/Tax) *</label><input type="text" name="company_id" required class="mt-1 w-full border rounded px-3 py-2"></div>
+                <div><label class="block text-sm font-medium text-gray-700">Email (optional)</label><input type="email" name="email" class="mt-1 w-full border rounded px-3 py-2"></div>
                 <div class="flex justify-end space-x-3 pt-4">
                     <button type="button" onclick="closeClientModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
                     <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Add Client</button>
@@ -263,58 +342,23 @@
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md m-4">
             <div class="flex justify-between items-center p-4 border-b">
                 <h3 class="text-lg font-medium">Record Payment</h3>
-                <button onclick="closePaymentModal()" class="text-gray-400 hover:text-gray-600">
-                    <i class="fas fa-times text-xl"></i>
-                </button>
+                <button onclick="closePaymentModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <form id="payment-form" class="p-4 space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Client *</label>
-                    <select name="client_id" id="payment-client" required class="mt-1 w-full border rounded px-3 py-2">
-                        <option value="">Select client...</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Invoice *</label>
-                    <select name="invoice_id" id="payment-invoice" required class="mt-1 w-full border rounded px-3 py-2">
-                        <option value="">Select invoice...</option>
-                    </select>
-                    <p id="invoice-due-info" class="text-sm text-gray-500 mt-1"></p>
+                <div><label class="block text-sm font-medium text-gray-700">Client *</label><select name="client_id" id="payment-client" required class="mt-1 w-full border rounded px-3 py-2"><option value="">Select client...</option></select></div>
+                <div><label class="block text-sm font-medium text-gray-700">Invoice *</label><select name="invoice_id" id="payment-invoice" required class="mt-1 w-full border rounded px-3 py-2"><option value="">Select invoice...</option></select><p id="invoice-due-info" class="text-sm text-gray-500 mt-1"></p></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="block text-sm font-medium text-gray-700">Amount *</label><input type="number" name="amount" id="payment-amount" required step="0.01" min="0.01" class="mt-1 w-full border rounded px-3 py-2"></div>
+                    <div><label class="block text-sm font-medium text-gray-700">Currency</label><input type="text" name="currency" value="EUR" class="mt-1 w-full border rounded px-3 py-2 bg-gray-50" readonly></div>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Amount *</label>
-                        <input type="number" name="amount" id="payment-amount" required step="0.01" min="0.01" class="mt-1 w-full border rounded px-3 py-2">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Currency</label>
-                        <input type="text" name="currency" value="EUR" class="mt-1 w-full border rounded px-3 py-2 bg-gray-50" readonly>
-                    </div>
+                    <div><label class="block text-sm font-medium text-gray-700">Date</label><input type="text" name="date" id="payment-date" placeholder="DD.MM.YYYY" class="mt-1 w-full border rounded px-3 py-2"></div>
+                    <div><label class="block text-sm font-medium text-gray-700">Method</label><select name="method" class="mt-1 w-full border rounded px-3 py-2"><option value="">Select...</option><option value="bank transfer">Bank Transfer</option><option value="cash">Cash</option><option value="other">Other</option></select></div>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Date</label>
-                        <input type="text" name="date" id="payment-date" placeholder="DD.MM.YYYY (today)" class="mt-1 w-full border rounded px-3 py-2">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Method</label>
-                        <select name="method" class="mt-1 w-full border rounded px-3 py-2">
-                            <option value="">Select...</option>
-                            <option value="bank transfer">Bank Transfer</option>
-                            <option value="cash">Cash</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Notes</label>
-                    <input type="text" name="notes" placeholder="Reference number, etc." class="mt-1 w-full border rounded px-3 py-2">
-                </div>
+                <div><label class="block text-sm font-medium text-gray-700">Notes</label><input type="text" name="notes" placeholder="Reference number, etc." class="mt-1 w-full border rounded px-3 py-2"></div>
                 <div class="flex justify-end space-x-3 pt-4">
                     <button type="button" onclick="closePaymentModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
-                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-                        <i class="fas fa-check mr-2"></i>Record Payment
-                    </button>
+                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"><i class="fas fa-check mr-2"></i>Record Payment</button>
                 </div>
             </form>
         </div>
@@ -325,65 +369,37 @@
         <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl m-4 max-h-[90vh] flex flex-col">
             <div class="flex justify-between items-center p-4 border-b">
                 <h3 class="text-lg font-medium" id="client-detail-title">Client Details</h3>
-                <button onclick="closeClientDetailModal()" class="text-gray-400 hover:text-gray-600">
-                    <i class="fas fa-times text-xl"></i>
-                </button>
+                <button onclick="closeClientDetailModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <div class="p-4 overflow-y-auto flex-1">
-                <!-- Summary -->
                 <div class="grid grid-cols-3 gap-4 mb-6">
-                    <div class="bg-blue-50 rounded-lg p-4 text-center">
-                        <p class="text-sm text-gray-600">Total Invoiced</p>
-                        <p class="text-2xl font-bold text-blue-600" id="client-total-invoiced">EUR 0</p>
-                    </div>
-                    <div class="bg-green-50 rounded-lg p-4 text-center">
-                        <p class="text-sm text-gray-600">Total Paid</p>
-                        <p class="text-2xl font-bold text-green-600" id="client-total-paid">EUR 0</p>
-                    </div>
-                    <div class="bg-red-50 rounded-lg p-4 text-center">
-                        <p class="text-sm text-gray-600">Outstanding</p>
-                        <p class="text-2xl font-bold text-red-600" id="client-total-due">EUR 0</p>
-                    </div>
+                    <div class="bg-blue-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600">Total Invoiced</p><p class="text-2xl font-bold text-blue-600" id="client-total-invoiced">EUR 0</p></div>
+                    <div class="bg-green-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600">Total Paid</p><p class="text-2xl font-bold text-green-600" id="client-total-paid">EUR 0</p></div>
+                    <div class="bg-red-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600">Outstanding</p><p class="text-2xl font-bold text-red-600" id="client-total-due">EUR 0</p></div>
                 </div>
-
-                <!-- Invoices -->
                 <div class="mb-6">
                     <h4 class="text-md font-medium text-gray-900 mb-3">Invoices</h4>
                     <div class="bg-gray-50 rounded-lg overflow-hidden">
-                        <table class="min-w-full">
-                            <thead class="bg-gray-100">
-                                <tr>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Due</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody id="client-invoices-table" class="divide-y divide-gray-200">
-                            </tbody>
-                        </table>
+                        <table class="min-w-full"><thead class="bg-gray-100"><tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Due</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        </tr></thead><tbody id="client-invoices-table" class="divide-y divide-gray-200"></tbody></table>
                     </div>
                 </div>
-
-                <!-- Payment History -->
                 <div>
                     <h4 class="text-md font-medium text-gray-900 mb-3">Payment History</h4>
                     <div class="bg-gray-50 rounded-lg overflow-hidden">
-                        <table class="min-w-full">
-                            <thead class="bg-gray-100">
-                                <tr>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
-                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
-                                </tr>
-                            </thead>
-                            <tbody id="client-payments-table" class="divide-y divide-gray-200">
-                            </tbody>
-                        </table>
+                        <table class="min-w-full"><thead class="bg-gray-100"><tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
+                        </tr></thead><tbody id="client-payments-table" class="divide-y divide-gray-200"></tbody></table>
                     </div>
                 </div>
             </div>

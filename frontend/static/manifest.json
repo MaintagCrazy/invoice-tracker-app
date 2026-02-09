@@ -1,0 +1,9 @@
+{
+    "name": "Invoice Tracker",
+    "short_name": "Invoices",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#f9fafb",
+    "theme_color": "#3b82f6",
+    "icons": []
+}
