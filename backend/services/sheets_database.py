@@ -44,17 +44,45 @@ DEFAULT_CLIENTS = {
         "address": "Servatiusweg 33\n53332 Bornheim",
         "company_id": "",
         "email": None
+    },
+    4: {
+        "id": 4,
+        "name": "Schneider & Bitzer GmbH",
+        "address": "",
+        "company_id": "",
+        "email": None
+    },
+    5: {
+        "id": 5,
+        "name": "Hillenbrand Bauunternehmen GmbH",
+        "address": "",
+        "company_id": "",
+        "email": None
+    },
+    6: {
+        "id": 6,
+        "name": "BUDMAT",
+        "address": "",
+        "company_id": "",
+        "email": None
     }
 }
 
 # Map client names to IDs
 CLIENT_NAME_TO_ID = {
     "Bauceram GmbH": 1,
+    "BauCeram GmbH": 1,
     "bauceram": 1,
     "Clinker Bau Schweiz GmbH": 2,
     "clinker": 2,
     "Stuckgeschäft Laufenberg": 3,
     "laufenberg": 3,
+    "Schneider & Bitzer GmbH": 4,
+    "schneider": 4,
+    "Hillenbrand Bauunternehmen GmbH": 5,
+    "hillenbrand": 5,
+    "BUDMAT": 6,
+    "budmat": 6,
 }
 
 
@@ -360,11 +388,14 @@ class SheetsDatabaseService:
         total_paid = sum(i['amount_paid'] for i in invoices)
         total_due = sum(i['amount_due'] for i in invoices)
 
-        # By client
+        # By client - total invoiced
         by_client = {}
+        # By client - outstanding due
+        due_by_client = {}
         for inv in invoices:
             client_name = inv['client']['name'] if inv['client'] else 'Unknown'
             by_client[client_name] = by_client.get(client_name, 0) + inv['amount']
+            due_by_client[client_name] = due_by_client.get(client_name, 0) + inv['amount_due']
 
         return {
             "total_invoices": total,
@@ -374,7 +405,8 @@ class SheetsDatabaseService:
             "total_amount": total_amount,
             "total_paid": total_paid,
             "total_due": total_due,
-            "total_by_client": by_client
+            "total_by_client": by_client,
+            "due_by_client": due_by_client
         }
 
     # ============ PAYMENTS ============

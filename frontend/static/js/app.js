@@ -49,17 +49,25 @@ async function loadStats() {
         document.getElementById('stat-paid').textContent = stats.paid_count;
         document.getElementById('stat-due').textContent = formatCurrency(stats.total_due || 0);
         document.getElementById('stat-received').textContent = formatCurrency(stats.total_paid || 0);
-        document.getElementById('stat-total-amount').textContent = formatCurrency(stats.total_amount);
+        document.getElementById('stat-total-outstanding').textContent = formatCurrency(stats.total_due || 0);
 
-        // Client breakdown
+        // Client breakdown - show outstanding amounts only
         const breakdown = document.getElementById('client-breakdown');
-        breakdown.innerHTML = Object.entries(stats.total_by_client || {})
-            .map(([client, total]) => `
-                <div class="flex justify-between items-center">
-                    <span class="text-gray-600">${client}</span>
-                    <span class="font-medium">${formatCurrency(total)}</span>
-                </div>
-            `).join('') || '<p class="text-gray-500">No invoices yet</p>';
+        const dueByClient = stats.due_by_client || {};
+        const clientsWithDue = Object.entries(dueByClient).filter(([_, due]) => due > 0);
+
+        if (clientsWithDue.length === 0) {
+            breakdown.innerHTML = '<p class="text-green-600 font-medium">All invoices paid!</p>';
+        } else {
+            breakdown.innerHTML = clientsWithDue
+                .sort((a, b) => b[1] - a[1])  // Sort by due amount descending
+                .map(([client, due]) => `
+                    <div class="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded" onclick="filterByClientName('${client.replace(/'/g, "\\'")}')">
+                        <span class="text-blue-600 hover:underline">${client}</span>
+                        <span class="font-medium text-red-600">${formatCurrency(due)}</span>
+                    </div>
+                `).join('');
+        }
     } catch (error) {
         console.error('Error loading stats:', error);
     }
@@ -115,7 +123,7 @@ function renderInvoices() {
                 <span class="font-medium">${inv.invoice_number}</span>
             </td>
             <td class="px-4 py-3">
-                <button onclick="showClientDetail(${inv.client_id})" class="text-blue-600 hover:text-blue-800 hover:underline text-left">
+                <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="text-blue-600 hover:text-blue-800 hover:underline text-left">
                     ${inv.client?.name || '-'}
                 </button>
             </td>
@@ -307,7 +315,38 @@ clientForm.addEventListener('submit', async (e) => {
 
 // Filter change handlers
 filterStatus.addEventListener('change', loadInvoices);
-filterClient.addEventListener('change', loadInvoices);
+filterClient.addEventListener('change', () => {
+    updateClearFilterButton();
+    loadInvoices();
+});
+
+// Update clear filter button visibility
+function updateClearFilterButton() {
+    const clearBtn = document.getElementById('clear-filter-btn');
+    if (filterClient.value) {
+        clearBtn.classList.remove('hidden');
+    } else {
+        clearBtn.classList.add('hidden');
+    }
+}
+
+// Filter by client name (clicked from breakdown or invoice table)
+function filterByClientName(clientName) {
+    // Find client ID by name
+    const client = clients.find(c => c.name === clientName);
+    if (client) {
+        filterClient.value = client.id;
+        updateClearFilterButton();
+        loadInvoices();
+    }
+}
+
+// Clear client filter
+function clearClientFilter() {
+    filterClient.value = '';
+    updateClearFilterButton();
+    loadInvoices();
+}
 
 // Close modals on escape
 document.addEventListener('keydown', (e) => {
