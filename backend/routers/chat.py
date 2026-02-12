@@ -181,8 +181,6 @@ async def confirm_action(conversation_id: str):
         description=extracted.get("description", ""),
         amount=float(amount),
         currency=extracted.get("currency", "EUR"),
-        issue_date=extracted.get("issue_date"),
-        due_date=extracted.get("due_date"),
         work_dates=extracted.get("work_dates")
     )
 

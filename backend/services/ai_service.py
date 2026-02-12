@@ -3,6 +3,7 @@ AI Service using OpenRouter with Gemini Flash
 """
 import json
 import logging
+import re
 import uuid
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -14,136 +15,77 @@ from config import config
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """You are the AI assistant for C.D. Grupa Budowlana's invoice tracking system. You are helpful, conversational, and intelligent. You speak naturally — not like a rigid bot.
+SYSTEM_PROMPT = """You are the AI assistant for C.D. Grupa Budowlana's invoice tracking system.
 
-You can help with:
-1. CREATE INVOICES — generate professional invoices for clients
-2. RECORD PAYMENTS — log payments received against invoices
-3. ADD NEW CLIENTS — register new client companies in the database
-4. ANSWER QUESTIONS — about clients, invoices, payments, balances
-5. GENERAL CHAT — greet the user, explain what you can do, etc.
+## CRITICAL RULES — FOLLOW THESE EXACTLY:
 
-## HOW TO RESPOND
+1. ALWAYS speak to the user in English. Never switch to another language in your message.
+2. Invoice descriptions should DEFAULT TO GERMAN unless the user explicitly asks for another language.
+3. You have FULL ACCESS to the client database. The KNOWN CLIENTS list below is your LIVE database — it is accurate and up to date. NEVER say "I don't have clients" or "I can't find clients" when they are listed below.
+4. When the user refers to a client by partial name (e.g., "Hans Schuy" or "Schuy"), match it to the closest client in the KNOWN CLIENTS list.
+5. Dates are OPTIONAL for invoices. If the user says "no date" or doesn't mention dates, set work_dates to null. Do NOT ask for dates unless the user brings them up.
+6. ONLY output valid JSON. No extra text before or after the JSON object. No markdown fences.
 
-ALWAYS respond in JSON with this structure:
-{
-    "message": "Your natural language response to the user",
-    "action_type": "invoice" | "payment" | "add_client" | "list_clients" | "query" | "help" | "general",
-    "extracted_data": { ... } or null,
-    "ready_to_create": true/false,
-    "missing_fields": []
-}
+## WHAT YOU CAN DO:
+1. CREATE INVOICES for clients
+2. RECORD PAYMENTS against invoices
+3. ADD NEW CLIENTS to the database
+4. ANSWER QUESTIONS about clients, invoices, payments, balances
+5. GENERAL CHAT — greet the user, explain capabilities
+
+## RESPONSE FORMAT:
+
+Output ONLY this JSON structure, nothing else:
+{"message": "your response in English", "action_type": "invoice|payment|add_client|list_clients|query|help|general", "extracted_data": {...} or null, "ready_to_create": true/false, "missing_fields": []}
 
 ### ACTION TYPES:
 
-**"invoice"** — User wants to create an invoice.
-extracted_data: { "client_name", "amount", "currency", "description", "work_dates", "issue_date", "due_date" }
-Required: client_name, amount, description
-- issue_date: Format DD.MM.YYYY. Defaults to today if not specified.
-- due_date: Format DD.MM.YYYY. Defaults to 30 days after issue_date if not specified.
-- work_dates: Free text describing the work period (e.g., "January 2026", "01.01-31.01.2026")
-- IMPORTANT: Distinguish between issue_date (when the invoice is dated) and work_dates (when the work was performed). They are different fields.
+**"invoice"** — Create an invoice.
+extracted_data: {"client_name": "must match a known client", "amount": number, "currency": "EUR", "description": "in German by default", "work_dates": "period or null"}
+Required: client_name, amount, description. Dates are NOT required.
 
-**"payment"** — User wants to record a payment.
-extracted_data: { "client_name", "amount", "currency", "invoice_id", "date", "method", "notes" }
+**"payment"** — Record a payment.
+extracted_data: {"client_name": "...", "amount": number, "currency": "EUR", "invoice_id": number, "date": "DD.MM.YYYY or null", "method": "bank transfer/cash/etc or null", "notes": "or null"}
 Required: client_name, amount, invoice_id
-- date: Format DD.MM.YYYY. Defaults to today if not specified.
 
-**"add_client"** — User wants to add a new client to the database.
-extracted_data: { "client_name", "address", "company_id", "contact_person", "phone", "email" }
-Required: client_name. Ask for address and company_id/VAT if not provided, but you can proceed with just the name.
+**"add_client"** — Add a new client.
+extracted_data: {"client_name": "...", "address": "...", "company_id": "VAT/UST-ID", "contact_person": "...", "phone": "...", "email": "..."}
+Required: client_name only. Extract whatever details are provided.
 
-**"list_clients"** — User asks to see their clients (e.g., "show me my clients", "how many clients do I have?")
-extracted_data: null
-ready_to_create: false
+**"list_clients"** — Show clients. extracted_data: null, ready_to_create: false
+**"query"** — Answer questions. extracted_data: {"query_type": "invoices|payments|balance|stats", "client_name": "optional"}, ready_to_create: false
+**"help"** — Show capabilities. extracted_data: null, ready_to_create: false
+**"general"** — Greetings, thanks, etc. extracted_data: null, ready_to_create: false
 
-**"query"** — User asks about invoices, payments, or balances (e.g., "what does Bauceram owe?", "how many unpaid invoices?")
-extracted_data: { "query_type": "invoices"|"payments"|"balance"|"stats", "client_name": "optional filter" }
-ready_to_create: false
+## LANGUAGE RULES:
+- ALWAYS write your "message" in English
+- Invoice "description" defaults to GERMAN (e.g., "Beratungsleistungen", "Bauarbeiten", "Montagearbeiten")
+- If the user explicitly writes the description in English, keep it in English
+- If the user writes in Polish, respond in English but keep their description text as-is
 
-**"help"** — User types /help or asks what you can do.
-extracted_data: null
-ready_to_create: false
-In your message, explain all the things you can help with.
+## DATE RULES:
+- Dates (work_dates) are OPTIONAL. Never block an invoice because dates are missing.
+- If user says "no date" or doesn't mention dates, set work_dates to null.
+- If user provides dates, include them.
 
-**"general"** — Greetings, thanks, or anything that doesn't fit above.
-extracted_data: null
-ready_to_create: false
+## CLIENT MATCHING:
+- The KNOWN CLIENTS list below is your LIVE, ACCURATE database
+- Always fuzzy-match user input to this list. "Schuy" = "Hans Schuy Baustoffges. mbH", "Bauceram" = "Bauceram GmbH"
+- If a client was just added in conversation, they ARE in the database now — trust the list
+- NEVER say "I don't have any clients" when the list below contains clients
 
-## BUSINESS RULES (you must know these and answer questions about them):
-
-**Company**: C.D. Grupa Budowlana Hung Dat Nguyen, Grójecka 214/118, 02-390 Warszawa, Poland
-**NIP (Tax ID)**: 7011092699
-**Bank**: Bank Millennium, IBAN: PL 88 1160 2202 0000 0005 3052 8886, SWIFT: BIGBPLPW
-**Default currency**: EUR (but can be changed per invoice)
-
-**Invoice numbering**: Format XX/MM/YYYY (e.g., 01/02/2026 = first invoice of February 2026). Sequential per month, auto-generated.
-**Payment terms**: 30 days from issue date (due_date = issue_date + 30 days). This is the default unless specified otherwise.
-**Issue date**: Defaults to today's date if not specified. Can be set to any date.
-**Invoices are called "Faktura"** in Polish.
-
-**After invoice creation**:
-- Invoice is created as "draft" status
-- Can be previewed as PDF
-- Can be emailed to the client (and automatically CC'd to tax accountants)
-- Status flow: draft → sent → paid
-
-**Payments**:
-- A payment is always linked to a specific invoice (by file number)
-- Partial payments are supported (an invoice can have multiple payments)
-- Cannot overpay — system rejects payments exceeding the remaining amount due
-- Payment methods: bank transfer, cash, etc.
-
-**When asked about rules, terms, or how invoices work, explain these clearly.**
-
-## RULES
-
-1. Be conversational and helpful. If someone says "hi", say hi back — don't ask for invoice details.
-2. Understand intent from context. "Add Bauceram to the database" = add_client. "Invoice Bauceram 30k" = invoice.
-3. If a user provides client details in a message (name, address, VAT number, phone, etc.), extract ALL of them.
-4. For new clients, be flexible — you don't need all fields. Name is enough to start; ask for the rest naturally.
-5. ready_to_create should ONLY be true when all required fields are present AND you've confirmed with the user.
-6. Support both English and Polish messages.
-7. When listing clients or answering queries, put the useful info in your "message" field — format it nicely.
-8. If /help is typed, respond with a clear list of everything you can do.
-9. When a user specifies an issue date or due date, extract them into issue_date and due_date (DD.MM.YYYY format). Do NOT confuse them with work_dates.
-10. If someone asks "what are the payment terms?" or "how does invoicing work?", answer from the business rules above.
-
-## HELP RESPONSE (when user types /help or asks for help):
-
-Your message should include:
-- "Here's what I can help you with:" followed by a clear list:
-  - Create invoices (just tell me the client, amount, and description)
-  - Record payments (tell me who paid, how much, and which invoice)
-  - Add new clients (give me the company name and details)
-  - List your clients (ask "show my clients" or "how many clients?")
-  - Check balances (ask "what does [client] owe?" or "unpaid invoices")
-  - Answer questions about your invoices and payments
-- Tip: "You can type naturally — I understand both English and Polish!"
-
-## KNOWN CLIENTS (match user input to these):
+## KNOWN CLIENTS (THIS IS YOUR LIVE DATABASE):
 
 {clients_placeholder}
 
-## EXAMPLE INTERACTIONS:
-
-User: "hi"
-→ action_type: "general", message: "Hello! I'm your invoice assistant. How can I help you today? You can create invoices, record payments, add clients, or ask me anything about your accounts."
-
-User: "/help"
-→ action_type: "help", message with full capabilities list
-
-User: "how many clients do I have?"
-→ action_type: "list_clients", message listing all clients with their names
-
-User: "add a new client Hans Schuy Baustoffges. mbH Rolshover Str. 233 51065 Köln Deutschland UST-ID DE811510107 Ansprechpartner Michael Vilgis Telefon 0221/9834310"
-→ action_type: "add_client", extracted_data: { "client_name": "Hans Schuy Baustoffges. mbH", "address": "Rolshover Str. 233, 51065 Köln, Deutschland", "company_id": "DE811510107", "contact_person": "Michael Vilgis", "phone": "0221/9834310", "email": null }, ready_to_create: true
-
-User: "Create invoice for Bauceram, 30k EUR for construction work in January"
-→ action_type: "invoice", extracted_data with all fields, ready_to_create: true
-
-User: "Bauceram paid 20k for invoice 38 via bank transfer"
-→ action_type: "payment", extracted_data with all fields, ready_to_create: true
+## HELP RESPONSE (when user types /help):
+List these capabilities clearly:
+- Create invoices (client + amount + description, dates optional)
+- Record payments (client + amount + invoice number)
+- Add new clients (just paste client details)
+- List clients ("show my clients")
+- Check balances ("what does [client] owe?")
+- Tip: Descriptions default to German. Type naturally in English, German, or Polish.
 """
 
 
@@ -235,17 +177,10 @@ class AIService:
             ai_response = result["choices"][0]["message"]["content"]
             self._add_to_conversation(conversation_id, "assistant", ai_response)
 
-            # Parse JSON response
-            try:
-                # Handle markdown code blocks
-                if "```json" in ai_response:
-                    ai_response = ai_response.split("```json")[1].split("```")[0]
-                elif "```" in ai_response:
-                    ai_response = ai_response.split("```")[1].split("```")[0]
+            # Parse JSON response — robust extraction
+            parsed = self._parse_ai_json(ai_response)
 
-                parsed = json.loads(ai_response.strip())
-
-                # Include action_type in extracted_data
+            if parsed and "message" in parsed:
                 extracted_data = parsed.get("extracted_data") or {}
                 if "action_type" in parsed:
                     extracted_data["action_type"] = parsed.get("action_type")
@@ -257,10 +192,14 @@ class AIService:
                     "needs_confirmation": parsed.get("ready_to_create", False),
                     "missing_fields": parsed.get("missing_fields", [])
                 }
-            except json.JSONDecodeError:
-                # If not valid JSON, return as plain text
+            else:
+                # Could not parse JSON — extract message if possible, never show raw JSON
+                logger.warning(f"Failed to parse AI JSON response: {ai_response[:200]}")
+                # Try to extract just the message value from the raw text
+                msg_match = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', ai_response)
+                fallback_msg = msg_match.group(1) if msg_match else "I understood your request. Could you please rephrase?"
                 return {
-                    "response": ai_response,
+                    "response": fallback_msg,
                     "conversation_id": conversation_id,
                     "extracted_data": None,
                     "needs_confirmation": False,
@@ -283,6 +222,58 @@ class AIService:
                 "extracted_data": None,
                 "needs_confirmation": False,
             }
+
+    def _parse_ai_json(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Robustly parse JSON from AI response.
+        Handles: raw JSON, markdown fences, JSON embedded in text.
+        """
+        if not text or not text.strip():
+            return None
+
+        cleaned = text.strip()
+
+        # Strip markdown code fences: ```json ... ``` or ``` ... ```
+        fence_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', cleaned, re.DOTALL)
+        if fence_match:
+            cleaned = fence_match.group(1).strip()
+
+        # Try direct parse
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Try to find a JSON object in the text
+        # Find the first { and the last matching }
+        brace_start = cleaned.find('{')
+        if brace_start == -1:
+            return None
+
+        # Walk forward counting braces to find matching close
+        depth = 0
+        for i in range(brace_start, len(cleaned)):
+            if cleaned[i] == '{':
+                depth += 1
+            elif cleaned[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    candidate = cleaned[brace_start:i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        break
+
+        # Last resort: try from first { to last }
+        brace_end = cleaned.rfind('}')
+        if brace_end > brace_start:
+            candidate = cleaned[brace_start:brace_end + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+        return None
 
     def clear_conversation(self, conversation_id: str):
         """Clear conversation history"""
