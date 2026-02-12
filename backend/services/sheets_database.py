@@ -153,6 +153,8 @@ class SheetsDatabaseService:
     def get_client_by_name(self, name: str) -> Optional[Dict]:
         """Get client by name (fuzzy match)"""
         name_lower = name.lower().strip()
+        if not name_lower:
+            return None
         clients = self.get_clients()
 
         # Exact match first
