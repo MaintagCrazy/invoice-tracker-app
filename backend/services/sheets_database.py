@@ -389,9 +389,11 @@ class SheetsDatabaseService:
             if not due_date:
                 due_date = (now + timedelta(days=30)).strftime("%d.%m.%Y")
 
-            # Get client
+            # Get client — refuse to create invoice without a valid client
             client = self.get_client(client_id)
-            client_name = client['name'] if client else ''
+            if not client:
+                raise ValueError(f"Client with ID {client_id} not found. Cannot create invoice without a client.")
+            client_name = client['name']
 
             # Prepare row data matching sheet columns:
             # File Name | File # | Invoice Number | Issue Date | Due Date | Client | Description | Amount | Currency | Status

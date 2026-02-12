@@ -495,9 +495,23 @@
 
         function populateClientDropdown(selectId, selectedName) {
             const sel = document.getElementById(selectId);
+            // Fuzzy match: AI may return partial name like "Hans" for "Hans Schuy Baustoffges. GmbH"
+            let matchedName = '';
+            if (selectedName) {
+                const lower = selectedName.toLowerCase();
+                const exact = availableClients.find(c => c.name.toLowerCase() === lower);
+                if (exact) {
+                    matchedName = exact.name;
+                } else {
+                    const partial = availableClients.find(c =>
+                        c.name.toLowerCase().includes(lower) || lower.includes(c.name.toLowerCase())
+                    );
+                    if (partial) matchedName = partial.name;
+                }
+            }
             sel.innerHTML = '<option value="">Select client...</option>' +
                 availableClients.map(c =>
-                    `<option value="${c.name}" ${c.name === selectedName ? 'selected' : ''}>${c.name}</option>`
+                    `<option value="${c.name}" ${c.name === matchedName ? 'selected' : ''}>${c.name}</option>`
                 ).join('');
         }
 
