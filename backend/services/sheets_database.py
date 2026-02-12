@@ -1,11 +1,13 @@
 """
 Google Sheets as Database Service
-Direct read/write to Google Sheets - single source of truth
+Direct read/write to Google Sheets - single source of truth.
+Includes in-memory caching to avoid Google API rate limits (60 reads/min).
 """
 import os
 import json
 import base64
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -33,14 +35,41 @@ SEED_CLIENTS = [
 ]
 
 
+CACHE_TTL = 30  # seconds — how long cached sheet data is considered fresh
+
+
 class SheetsDatabaseService:
-    """Google Sheets as database"""
+    """Google Sheets as database with in-memory caching"""
 
     def __init__(self):
         self.gc = None
         self.sheet = None
         self.db_worksheet = None
+        self._cache: Dict[str, Any] = {}       # key -> data
+        self._cache_ts: Dict[str, float] = {}   # key -> timestamp
         self._connect()
+
+    def _cache_get(self, key: str):
+        """Return cached value if fresh, else None"""
+        ts = self._cache_ts.get(key, 0)
+        if time.time() - ts < CACHE_TTL and key in self._cache:
+            return self._cache[key]
+        return None
+
+    def _cache_set(self, key: str, value):
+        """Store value in cache"""
+        self._cache[key] = value
+        self._cache_ts[key] = time.time()
+
+    def _cache_invalidate(self, *keys):
+        """Invalidate specific cache keys (or all if no keys given)"""
+        if not keys:
+            self._cache.clear()
+            self._cache_ts.clear()
+        else:
+            for k in keys:
+                self._cache.pop(k, None)
+                self._cache_ts.pop(k, None)
 
     def _connect(self):
         """Connect to Google Sheets"""
@@ -121,7 +150,10 @@ class SheetsDatabaseService:
     # ============ CLIENTS (Sheet-based) ============
 
     def get_clients(self) -> List[Dict]:
-        """Get all clients from Clients sheet"""
+        """Get all clients from Clients sheet (cached)"""
+        cached = self._cache_get("clients")
+        if cached is not None:
+            return cached
         try:
             all_data = self.clients_worksheet.get_all_records()
             clients = []
@@ -137,6 +169,7 @@ class SheetsDatabaseService:
                     "contact_person": row.get("Contact Person", ""),
                     "phone": row.get("Phone", ""),
                 })
+            self._cache_set("clients", clients)
             return clients
         except Exception as e:
             logger.error(f"Error fetching clients: {e}")
@@ -197,6 +230,7 @@ class SheetsDatabaseService:
         now = datetime.now().isoformat()
         row_data = [next_id, name, address, company_id, email, contact_person, phone, now]
         self.clients_worksheet.append_row(row_data)
+        self._cache_invalidate("clients")
 
         logger.info(f"Created client '{name}' (ID: {next_id})")
 
@@ -212,21 +246,20 @@ class SheetsDatabaseService:
 
     # ============ INVOICES ============
 
-    def get_invoices(self, status: Optional[str] = None, client_id: Optional[int] = None) -> List[Dict]:
-        """Get all invoices from sheet with payment status"""
+    def _load_all_invoices(self) -> List[Dict]:
+        """Load all invoices from sheet (cached). Returns unfiltered, sorted list."""
+        cached = self._cache_get("invoices")
+        if cached is not None:
+            return cached
         try:
             all_data = self.db_worksheet.get_all_records()
-
-            # Get all payments for calculating amounts
             payments_by_invoice = self._get_payments_by_invoice()
-
             invoices = []
 
             for row in all_data:
                 if not row.get('File #'):
                     continue
 
-                # Map client name to client object
                 client_name = row.get('Client', '')
                 client = self.get_client_by_name(client_name) or {
                     "id": 0,
@@ -239,12 +272,10 @@ class SheetsDatabaseService:
                 file_number = int(row.get('File #', 0))
                 amount = float(row.get('Amount', 0)) if row.get('Amount') else 0
 
-                # Calculate payment status
                 invoice_payments = payments_by_invoice.get(file_number, [])
                 amount_paid = sum(p['amount'] for p in invoice_payments)
                 amount_due = max(0, amount - amount_paid)
 
-                # Determine payment status
                 if amount_paid >= amount:
                     payment_status = "paid"
                 elif amount_paid > 0:
@@ -266,7 +297,7 @@ class SheetsDatabaseService:
                     "currency": row.get('Currency', 'EUR'),
                     "issue_date": row.get('Issue Date', ''),
                     "due_date": row.get('Due Date', ''),
-                    "status": row.get('Status', 'sent'),  # Assume existing are sent
+                    "status": row.get('Status', 'sent'),
                     "work_dates": row.get('Work Dates', ''),
                     "created_at": row.get('Created At', ''),
                     "sent_at": None,
@@ -276,22 +307,22 @@ class SheetsDatabaseService:
                 }
                 invoices.append(invoice)
 
-            # Sort by file number descending
             invoices.sort(key=lambda x: x['file_number'], reverse=True)
-
-            # Filter by status if provided
-            if status:
-                invoices = [i for i in invoices if i['status'] == status]
-
-            # Filter by client_id if provided
-            if client_id:
-                invoices = [i for i in invoices if i['client_id'] == client_id]
-
+            self._cache_set("invoices", invoices)
             return invoices
 
         except Exception as e:
             logger.error(f"Error fetching invoices: {e}")
             return []
+
+    def get_invoices(self, status: Optional[str] = None, client_id: Optional[int] = None) -> List[Dict]:
+        """Get invoices with optional filters (uses cached data)"""
+        invoices = self._load_all_invoices()
+        if status:
+            invoices = [i for i in invoices if i['status'] == status]
+        if client_id:
+            invoices = [i for i in invoices if i['client_id'] == client_id]
+        return invoices
 
     def get_invoice(self, invoice_id: int) -> Optional[Dict]:
         """Get single invoice by ID (file number)"""
@@ -379,6 +410,7 @@ class SheetsDatabaseService:
 
             # Append to sheet
             self.db_worksheet.append_row(row_data)
+            self._cache_invalidate("invoices")
             logger.info(f"Created invoice {invoice_number} (File #{file_number})")
 
             return {
@@ -419,6 +451,7 @@ class SheetsDatabaseService:
                     if "status" in updates:
                         self.db_worksheet.update_cell(row_num, 10, updates["status"])
                     logger.info(f"Updated invoice {file_number}: {list(updates.keys())}")
+                    self._cache_invalidate("invoices")
                     return True
             return False
         except Exception as e:
@@ -433,6 +466,7 @@ class SheetsDatabaseService:
                 if int(row.get('File #', 0)) == file_number:
                     row_num = idx + 2
                     self.db_worksheet.delete_rows(row_num)
+                    self._cache_invalidate("invoices")
                     logger.info(f"Deleted invoice {file_number}")
                     return True
             return False
@@ -448,6 +482,7 @@ class SheetsDatabaseService:
                 if int(row.get('ID', 0)) == client_id:
                     row_num = idx + 2
                     self.clients_worksheet.delete_rows(row_num)
+                    self._cache_invalidate("clients")
                     logger.info(f"Deleted client {client_id}")
                     return True
             return False
@@ -466,6 +501,7 @@ class SheetsDatabaseService:
                     row_num = idx + 2
                     # Status is column J (10th column)
                     self.db_worksheet.update_cell(row_num, 10, status)
+                    self._cache_invalidate("invoices")
                     logger.info(f"Updated invoice {file_number} status to {status}")
                     return True
             return False
@@ -482,6 +518,7 @@ class SheetsDatabaseService:
                     row_num = idx + 2  # 1 for header, 1 for 0-index
                     # Drive File ID is column K (11th column)
                     self.db_worksheet.update_cell(row_num, 11, drive_file_id)
+                    self._cache_invalidate("invoices")
                     logger.info(f"Updated invoice {file_number} Drive File ID: {drive_file_id}")
                     return True
             return False
@@ -525,7 +562,10 @@ class SheetsDatabaseService:
     # ============ PAYMENTS ============
 
     def _get_payments_by_invoice(self) -> Dict[int, List[Dict]]:
-        """Get all payments grouped by invoice file number"""
+        """Get all payments grouped by invoice file number (cached)"""
+        cached = self._cache_get("payments_by_invoice")
+        if cached is not None:
+            return cached
         try:
             all_data = self.payments_worksheet.get_all_records()
             payments_by_invoice = {}
@@ -551,6 +591,7 @@ class SheetsDatabaseService:
                 }
                 payments_by_invoice[invoice_num].append(payment)
 
+            self._cache_set("payments_by_invoice", payments_by_invoice)
             return payments_by_invoice
         except Exception as e:
             logger.error(f"Error fetching payments by invoice: {e}")
@@ -561,29 +602,14 @@ class SheetsDatabaseService:
         client_id: Optional[int] = None,
         invoice_id: Optional[int] = None
     ) -> List[Dict]:
-        """Get all payments with optional filters"""
+        """Get all payments with optional filters (uses cached data)"""
         try:
-            all_data = self.payments_worksheet.get_all_records()
+            payments_by_inv = self._get_payments_by_invoice()
             payments = []
+            for inv_payments in payments_by_inv.values():
+                payments.extend(inv_payments)
 
-            for row in all_data:
-                if not row.get('Payment ID'):
-                    continue
-
-                payment = {
-                    "id": int(row.get('Payment ID', 0)),
-                    "invoice_id": int(row.get('Invoice #', 0)),
-                    "client": row.get('Client', ''),
-                    "amount": float(row.get('Amount', 0)) if row.get('Amount') else 0,
-                    "currency": row.get('Currency', 'EUR'),
-                    "date": row.get('Date', ''),
-                    "method": row.get('Method', ''),
-                    "notes": row.get('Notes', ''),
-                    "created_at": row.get('Created At', '')
-                }
-                payments.append(payment)
-
-            # Sort by date descending
+            # Sort by ID descending
             payments.sort(key=lambda x: x['id'], reverse=True)
 
             # Filter by invoice_id if provided
@@ -664,6 +690,7 @@ class SheetsDatabaseService:
 
             # Append to sheet
             self.payments_worksheet.append_row(row_data)
+            self._cache_invalidate("payments_by_invoice", "invoices")
             logger.info(f"Created payment {payment_id} for invoice {invoice_id}")
 
             return {
@@ -691,6 +718,7 @@ class SheetsDatabaseService:
                     # Row index is idx + 2 (1 for header, 1 for 0-index)
                     row_num = idx + 2
                     self.payments_worksheet.delete_rows(row_num)
+                    self._cache_invalidate("payments_by_invoice", "invoices")
                     logger.info(f"Deleted payment {payment_id}")
                     return True
             return False
