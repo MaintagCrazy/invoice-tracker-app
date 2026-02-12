@@ -237,7 +237,7 @@ class AIService:
         except httpx.HTTPError as e:
             logger.error(f"OpenRouter API error: {e}")
             return {
-                "response": f"AI service error: {type(e).__name__}: {e}",
+                "response": "Sorry, I'm having trouble connecting to the AI service. Please try again in a moment.",
                 "conversation_id": conversation_id,
                 "extracted_data": None,
                 "needs_confirmation": False,
@@ -245,7 +245,7 @@ class AIService:
         except Exception as e:
             logger.error(f"Unexpected error in AI chat: {type(e).__name__}: {e}")
             return {
-                "response": f"Unexpected error: {type(e).__name__}: {e}",
+                "response": "Something went wrong. Please try again.",
                 "conversation_id": conversation_id,
                 "extracted_data": None,
                 "needs_confirmation": False,
