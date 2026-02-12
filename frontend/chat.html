@@ -7,44 +7,33 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        .chat-message {
-            animation: fadeIn 0.3s ease-in-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .typing-indicator {
-            display: flex;
-            gap: 4px;
-        }
-        .typing-indicator span {
-            width: 8px;
-            height: 8px;
-            background: #9ca3af;
-            border-radius: 50%;
-            animation: bounce 1.4s infinite ease-in-out;
-        }
+        .chat-message { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .typing-indicator { display: flex; gap: 4px; }
+        .typing-indicator span { width: 8px; height: 8px; background: #9ca3af; border-radius: 50%; animation: bounce 1.4s infinite ease-in-out; }
         .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
         .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
-        @keyframes bounce {
-            0%, 80%, 100% { transform: scale(0); }
-            40% { transform: scale(1); }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+        .quick-action { transition: all 0.2s; }
+        .quick-action:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .ai-message-content { white-space: pre-line; }
+        .ai-message-content ul, .ai-message-content ol { padding-left: 1.2em; }
+        /* Undo toast */
+        .undo-toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: #065f46; color: white; padding: 12px 24px; border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.3); display: flex; align-items: center; gap: 16px;
+            z-index: 100; animation: slideUp 0.3s ease-out;
         }
-        .quick-action {
-            transition: all 0.2s;
-        }
-        .quick-action:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        /* Format AI messages with line breaks */
-        .ai-message-content {
-            white-space: pre-line;
-        }
-        .ai-message-content ul, .ai-message-content ol {
-            padding-left: 1.2em;
-        }
+        @keyframes slideUp { from { transform: translateX(-50%) translateY(20px); opacity: 0; } to { transform: translateX(-50%) translateY(0); opacity: 1; } }
+        .undo-toast button { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .undo-toast button:hover { background: rgba(255,255,255,0.3); }
+        /* Document action buttons */
+        .doc-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+        .doc-action-btn:hover { transform: translateY(-1px); }
+        /* Preview iframe modal */
+        .preview-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 80; display: flex; align-items: center; justify-content: center; }
+        .preview-frame-container { background: white; border-radius: 12px; width: 90%; max-width: 800px; height: 85vh; display: flex; flex-direction: column; }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col">
@@ -67,7 +56,6 @@
     <!-- Chat Interface -->
     <main class="flex-1 max-w-3xl mx-auto w-full px-4 py-8 flex flex-col">
         <div class="bg-white rounded-lg shadow-lg flex-1 flex flex-col overflow-hidden">
-            <!-- Chat Header -->
             <div class="border-b px-6 py-4">
                 <h2 class="text-lg font-semibold text-gray-900">AI Assistant</h2>
                 <p class="text-sm text-gray-500">Chat naturally — I can create invoices, manage clients, and answer questions</p>
@@ -75,7 +63,6 @@
 
             <!-- Chat Messages -->
             <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-4">
-                <!-- Initial AI message -->
                 <div class="chat-message flex items-start">
                     <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
                         <i class="fas fa-robot text-white text-sm"></i>
@@ -86,8 +73,9 @@
                             <li><i class="fas fa-file-invoice text-blue-500 w-5"></i> Create invoices</li>
                             <li><i class="fas fa-money-bill-wave text-green-500 w-5"></i> Record payments</li>
                             <li><i class="fas fa-user-plus text-purple-500 w-5"></i> Add new clients</li>
-                            <li><i class="fas fa-users text-orange-500 w-5"></i> List & manage clients</li>
-                            <li><i class="fas fa-chart-bar text-indigo-500 w-5"></i> Check balances & stats</li>
+                            <li><i class="fas fa-users text-orange-500 w-5"></i> List &amp; manage clients</li>
+                            <li><i class="fas fa-chart-bar text-indigo-500 w-5"></i> Check balances &amp; stats</li>
+                            <li><i class="fas fa-edit text-yellow-500 w-5"></i> Edit invoices</li>
                         </ul>
                         <p class="text-gray-500 text-xs mt-3">Type <strong>/help</strong> anytime for full details</p>
                     </div>
@@ -96,19 +84,19 @@
 
             <!-- Quick Actions -->
             <div class="border-t border-gray-100 px-4 py-2 flex gap-2 overflow-x-auto">
-                <button onclick="sendMessage('/help')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                <button onclick="sendQuickMessage('/help')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
                     <i class="fas fa-question-circle mr-1"></i>/help
                 </button>
-                <button onclick="sendMessage('Show my clients')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                <button onclick="sendQuickMessage('Show my clients')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
                     <i class="fas fa-users mr-1"></i>My clients
                 </button>
-                <button onclick="sendMessage('Create a new invoice')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                <button onclick="sendQuickMessage('Create a new invoice')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
                     <i class="fas fa-plus mr-1"></i>New invoice
                 </button>
-                <button onclick="sendMessage('Record a payment')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                <button onclick="sendQuickMessage('Record a payment')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
                     <i class="fas fa-money-bill mr-1"></i>Record payment
                 </button>
-                <button onclick="sendMessage('Add a new client')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                <button onclick="sendQuickMessage('Add a new client')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
                     <i class="fas fa-user-plus mr-1"></i>Add client
                 </button>
             </div>
@@ -116,13 +104,8 @@
             <!-- Input Area -->
             <div class="border-t px-4 py-4">
                 <form id="chat-form" class="flex items-center space-x-3">
-                    <input
-                        type="text"
-                        id="chat-input"
-                        placeholder="Type a message... (e.g. 'add new client Hans Schuy GmbH')"
-                        class="flex-1 border rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        autocomplete="off"
-                    >
+                    <input type="text" id="chat-input" placeholder="Type a message... (e.g. 'invoice Bauceram 5000 Bauarbeiten')"
+                        class="flex-1 border rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" autocomplete="off">
                     <button type="submit" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center">
                         <i class="fas fa-paper-plane"></i>
                     </button>
@@ -130,7 +113,6 @@
             </div>
         </div>
 
-        <!-- Bottom Actions -->
         <div class="mt-4 flex justify-center space-x-4">
             <button id="clear-btn" class="text-gray-500 hover:text-gray-700">
                 <i class="fas fa-trash mr-2"></i>Clear Chat
@@ -138,57 +120,200 @@
         </div>
     </main>
 
-    <!-- Confirmation Modal (for invoices, payments, and new clients) -->
+    <!-- Editable Confirmation Modal -->
     <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4 max-h-[90vh] overflow-y-auto">
             <div class="p-6">
                 <div class="flex items-center mb-4">
-                    <div id="confirm-icon" class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
-                        <i class="fas fa-check text-green-600 text-xl"></i>
+                    <div id="confirm-icon" class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                        <i class="fas fa-file-invoice text-blue-600 text-xl"></i>
                     </div>
                     <h3 id="confirm-title" class="ml-4 text-lg font-semibold">Confirm Action</h3>
                 </div>
-                <div id="action-summary" class="bg-gray-50 rounded-lg p-4 mb-4">
-                    <!-- Filled by JS -->
+
+                <!-- Invoice Form -->
+                <div id="form-invoice" class="hidden space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Client</label>
+                        <select id="cf-invoice-client" class="w-full border rounded-lg px-3 py-2"></select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                            <input type="number" id="cf-invoice-amount" step="0.01" min="0" class="w-full border rounded-lg px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+                            <select id="cf-invoice-currency" class="w-full border rounded-lg px-3 py-2">
+                                <option value="EUR">EUR</option>
+                                <option value="PLN">PLN</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="currency-conversion-box" class="hidden bg-blue-50 rounded-lg px-3 py-2 text-sm text-blue-700">
+                        <i class="fas fa-exchange-alt mr-1"></i> <span id="conversion-text"></span>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                        <textarea id="cf-invoice-description" rows="2" class="w-full border rounded-lg px-3 py-2"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Work Period (optional)</label>
+                        <input type="text" id="cf-invoice-dates" placeholder="e.g. 01.01-15.01.2026" class="w-full border rounded-lg px-3 py-2">
+                    </div>
                 </div>
-                <div class="flex justify-end space-x-3">
-                    <button onclick="closeConfirmModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
-                    <button id="confirm-create-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                        <i class="fas fa-check mr-2"></i>Confirm
+
+                <!-- Payment Form -->
+                <div id="form-payment" class="hidden space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Client</label>
+                        <select id="cf-payment-client" class="w-full border rounded-lg px-3 py-2"></select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Invoice #</label>
+                        <select id="cf-payment-invoice" class="w-full border rounded-lg px-3 py-2">
+                            <option value="">Select invoice...</option>
+                        </select>
+                        <p id="cf-payment-due-info" class="text-sm text-gray-500 mt-1"></p>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                            <input type="number" id="cf-payment-amount" step="0.01" min="0" class="w-full border rounded-lg px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+                            <select id="cf-payment-currency" class="w-full border rounded-lg px-3 py-2">
+                                <option value="EUR">EUR</option>
+                                <option value="PLN">PLN</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                            <input type="text" id="cf-payment-date" placeholder="DD.MM.YYYY" class="w-full border rounded-lg px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Method</label>
+                            <select id="cf-payment-method" class="w-full border rounded-lg px-3 py-2">
+                                <option value="">Select...</option>
+                                <option value="bank transfer">Bank Transfer</option>
+                                <option value="cash">Cash</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                        <input type="text" id="cf-payment-notes" class="w-full border rounded-lg px-3 py-2">
+                    </div>
+                </div>
+
+                <!-- Client Form -->
+                <div id="form-client" class="hidden space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Company Name</label>
+                        <input type="text" id="cf-client-name" class="w-full border rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                        <textarea id="cf-client-address" rows="2" class="w-full border rounded-lg px-3 py-2"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">VAT/Tax ID</label>
+                        <input type="text" id="cf-client-company-id" class="w-full border rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Contact Person</label>
+                        <input type="text" id="cf-client-contact" class="w-full border rounded-lg px-3 py-2">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                            <input type="text" id="cf-client-phone" class="w-full border rounded-lg px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                            <input type="email" id="cf-client-email" class="w-full border rounded-lg px-3 py-2">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Edit Invoice Form -->
+                <div id="form-edit-invoice" class="hidden space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Invoice #</label>
+                        <input type="number" id="cf-edit-invoice-id" class="w-full border rounded-lg px-3 py-2 bg-gray-50" readonly>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">New Amount</label>
+                        <input type="number" id="cf-edit-amount" step="0.01" min="0" class="w-full border rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">New Description</label>
+                        <textarea id="cf-edit-description" rows="2" class="w-full border rounded-lg px-3 py-2"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">New Status</label>
+                        <select id="cf-edit-status" class="w-full border rounded-lg px-3 py-2">
+                            <option value="">No change</option>
+                            <option value="draft">Draft</option>
+                            <option value="sent">Sent</option>
+                            <option value="paid">Paid</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="flex justify-between items-center mt-6">
+                    <button id="preview-draft-btn" class="hidden text-blue-600 hover:text-blue-800 text-sm font-medium">
+                        <i class="fas fa-eye mr-1"></i>Preview
                     </button>
+                    <div class="flex space-x-3 ml-auto">
+                        <button onclick="closeConfirmModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button id="confirm-create-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                            <i class="fas fa-check mr-2"></i>Confirm
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Success Modal -->
-    <div id="success-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4">
-            <div class="p-6 text-center">
-                <div id="success-icon" class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                    <i class="fas fa-check text-green-600 text-3xl"></i>
-                </div>
-                <h3 id="success-title" class="text-xl font-semibold mb-2">Success!</h3>
-                <p id="success-message" class="text-gray-600 mb-4"></p>
-                <div id="success-actions" class="flex justify-center space-x-3">
-                    <a href="/" class="px-4 py-2 border rounded hover:bg-gray-50">Go to Dashboard</a>
-                    <button id="preview-created-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 hidden">
-                        <i class="fas fa-file-pdf mr-2"></i>Preview PDF
-                    </button>
-                    <button onclick="closeSuccessModal()" class="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700">
-                        Continue chatting
-                    </button>
-                </div>
+    <!-- Undo Toast (replaces success modal) -->
+    <div id="undo-toast" class="undo-toast hidden">
+        <i class="fas fa-check-circle text-green-300"></i>
+        <span id="undo-message">Action completed</span>
+        <span id="undo-countdown" class="text-green-300 text-sm">(10s)</span>
+        <button onclick="undoLastAction()">Undo</button>
+    </div>
+
+    <!-- Preview Overlay (for invoice preview before confirm) -->
+    <div id="preview-overlay" class="preview-overlay hidden" onclick="closePreviewOverlay(event)">
+        <div class="preview-frame-container">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-medium">Invoice Preview</h3>
+                <button onclick="document.getElementById('preview-overlay').classList.add('hidden')" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="flex-1 p-4">
+                <iframe id="preview-frame" class="w-full h-full border rounded"></iframe>
             </div>
         </div>
     </div>
 
     <script>
         const API_BASE = '';
-        let conversationId = null;
+        let conversationId = localStorage.getItem('invoice_tracker_session') || null;
         let extractedData = null;
         let currentActionType = null;
-        let createdInvoiceId = null;
+        let availableClients = [];
+        let lastCreatedAction = null;
+        let undoTimer = null;
+        let undoCountdown = 10;
+
+        // Exchange rate cache
+        let exchangeRate = null;
 
         // Elements
         const chatForm = document.getElementById('chat-form');
@@ -196,40 +321,82 @@
         const chatMessages = document.getElementById('chat-messages');
         const clearBtn = document.getElementById('clear-btn');
         const confirmModal = document.getElementById('confirm-modal');
-        const successModal = document.getElementById('success-modal');
         const confirmCreateBtn = document.getElementById('confirm-create-btn');
-        const previewCreatedBtn = document.getElementById('preview-created-btn');
+        const undoToast = document.getElementById('undo-toast');
 
-        // Format AI text — convert newlines and basic markdown
-        function formatAIText(text) {
-            if (!text) return '';
-            // Escape HTML
-            let formatted = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            // Bold
-            formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            // Bullet points: lines starting with - or *
-            formatted = formatted.replace(/^[\-\*]\s+(.*)$/gm, '<li>$1</li>');
-            // Wrap consecutive <li> in <ul>
-            formatted = formatted.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="list-disc ml-4 space-y-1">$&</ul>');
-            // Numbered lists
-            formatted = formatted.replace(/^\d+\.\s+(.*)$/gm, '<li>$1</li>');
-            return formatted;
+        // ============ INIT ============
+
+        async function init() {
+            await loadClients();
+            await fetchExchangeRate();
+            restoreChatHistory();
         }
 
-        // Add message to chat
-        function addMessage(content, isUser = false) {
+        async function loadClients() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/clients/`);
+                availableClients = await resp.json();
+            } catch (e) { console.error('Failed to load clients', e); }
+        }
+
+        async function fetchExchangeRate() {
+            try {
+                const resp = await fetch('https://api.nbp.pl/api/exchangerates/rates/a/eur/?format=json');
+                const data = await resp.json();
+                exchangeRate = data.rates[0].mid;
+            } catch (e) {
+                exchangeRate = 4.30; // Fallback
+            }
+        }
+
+        // ============ CHAT PERSISTENCE ============
+
+        function saveChatHistory() {
+            const messages = [];
+            chatMessages.querySelectorAll('.chat-message').forEach(el => {
+                messages.push(el.outerHTML);
+            });
+            // Keep max 50 messages
+            const toSave = messages.slice(-50);
+            localStorage.setItem('invoice_tracker_chat', JSON.stringify(toSave));
+            if (conversationId) localStorage.setItem('invoice_tracker_session', conversationId);
+        }
+
+        function restoreChatHistory() {
+            const saved = localStorage.getItem('invoice_tracker_chat');
+            if (saved) {
+                try {
+                    const messages = JSON.parse(saved);
+                    if (messages.length > 0) {
+                        chatMessages.innerHTML = messages.join('');
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    }
+                } catch (e) { /* ignore corrupt data */ }
+            }
+        }
+
+        // ============ FORMAT & RENDER ============
+
+        function formatAIText(text) {
+            if (!text) return '';
+            let f = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            f = f.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            f = f.replace(/^[\-\*]\s+(.*)$/gm, '<li>$1</li>');
+            f = f.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="list-disc ml-4 space-y-1">$&</ul>');
+            f = f.replace(/^\d+\.\s+(.*)$/gm, '<li>$1</li>');
+            return f;
+        }
+
+        function addMessage(content, isUser = false, extraHtml = '') {
             const div = document.createElement('div');
             div.className = 'chat-message flex items-start' + (isUser ? ' justify-end' : '');
 
             if (isUser) {
                 div.innerHTML = `
-                    <div class="bg-blue-600 text-white rounded-lg px-4 py-3 max-w-md">
-                        <p>${content}</p>
-                    </div>
+                    <div class="bg-blue-600 text-white rounded-lg px-4 py-3 max-w-md"><p>${content}</p></div>
                     <div class="ml-3 w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center flex-shrink-0">
                         <i class="fas fa-user text-gray-600 text-sm"></i>
-                    </div>
-                `;
+                    </div>`;
             } else {
                 div.innerHTML = `
                     <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
@@ -237,15 +404,15 @@
                     </div>
                     <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-lg">
                         <div class="text-gray-800 ai-message-content">${formatAIText(content)}</div>
-                    </div>
-                `;
+                        ${extraHtml}
+                    </div>`;
             }
 
             chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            saveChatHistory();
         }
 
-        // Add typing indicator
         function addTypingIndicator() {
             const div = document.createElement('div');
             div.id = 'typing-indicator';
@@ -255,23 +422,23 @@
                     <i class="fas fa-robot text-white text-sm"></i>
                 </div>
                 <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3">
-                    <div class="typing-indicator">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                    </div>
-                </div>
-            `;
+                    <div class="typing-indicator"><span></span><span></span><span></span></div>
+                </div>`;
             chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
         function removeTypingIndicator() {
-            const indicator = document.getElementById('typing-indicator');
-            if (indicator) indicator.remove();
+            const el = document.getElementById('typing-indicator');
+            if (el) el.remove();
         }
 
-        // Send chat message
+        // ============ SEND MESSAGE ============
+
+        function sendQuickMessage(msg) {
+            sendMessage(msg);
+        }
+
         async function sendMessage(message) {
             addMessage(message, true);
             chatInput.value = '';
@@ -281,19 +448,37 @@
                 const response = await fetch(`${API_BASE}/api/chat/`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message: message,
-                        conversation_id: conversationId
-                    })
+                    body: JSON.stringify({ message, conversation_id: conversationId })
                 });
 
                 const data = await response.json();
                 removeTypingIndicator();
 
-                conversationId = data.conversation_id;
-                addMessage(data.response);
+                if (!response.ok) {
+                    addMessage(data.detail || 'Error processing your message.');
+                    return;
+                }
 
-                // Check if ready to confirm an action
+                conversationId = data.conversation_id;
+                localStorage.setItem('invoice_tracker_session', conversationId);
+
+                // Check for document context (PDF links)
+                let extraHtml = '';
+                if (data.extracted_data && data.extracted_data.action_type === 'get_invoice_pdf') {
+                    const d = data.extracted_data;
+                    extraHtml = `<div class="mt-3 flex gap-2">
+                        <button onclick="openPreviewOverlay('${d.preview_url}')" class="doc-action-btn bg-blue-100 text-blue-700 hover:bg-blue-200">
+                            <i class="fas fa-eye"></i> Preview
+                        </button>
+                        <a href="${d.download_url}" target="_blank" class="doc-action-btn bg-green-100 text-green-700 hover:bg-green-200">
+                            <i class="fas fa-download"></i> Download PDF
+                        </a>
+                    </div>`;
+                }
+
+                addMessage(data.response, false, extraHtml);
+
+                // Check if needs confirmation — show editable modal
                 if (data.needs_confirmation && data.extracted_data) {
                     extractedData = data.extracted_data;
                     currentActionType = data.extracted_data.action_type || 'invoice';
@@ -306,177 +491,369 @@
             }
         }
 
-        // Show confirmation modal — adapts based on action type
+        // ============ EDITABLE CONFIRMATION MODAL ============
+
+        function populateClientDropdown(selectId, selectedName) {
+            const sel = document.getElementById(selectId);
+            sel.innerHTML = '<option value="">Select client...</option>' +
+                availableClients.map(c =>
+                    `<option value="${c.name}" ${c.name === selectedName ? 'selected' : ''}>${c.name}</option>`
+                ).join('');
+        }
+
         function showConfirmModal(data) {
-            const summary = document.getElementById('action-summary');
             const title = document.getElementById('confirm-title');
             const icon = document.getElementById('confirm-icon');
+            const previewBtn = document.getElementById('preview-draft-btn');
+
+            // Hide all forms
+            document.querySelectorAll('#form-invoice, #form-payment, #form-client, #form-edit-invoice')
+                .forEach(f => f.classList.add('hidden'));
+            previewBtn.classList.add('hidden');
+
             const actionType = data.action_type || 'invoice';
 
-            if (actionType === 'add_client') {
-                title.textContent = 'Add New Client';
-                icon.className = 'w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center';
-                icon.innerHTML = '<i class="fas fa-user-plus text-purple-600 text-xl"></i>';
-                confirmCreateBtn.innerHTML = '<i class="fas fa-user-plus mr-2"></i>Add Client';
+            if (actionType === 'invoice') {
+                title.textContent = 'Confirm Invoice Creation';
+                icon.className = 'w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-file-invoice text-blue-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Create Invoice';
 
-                summary.innerHTML = `
-                    <div class="space-y-2">
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Company:</span>
-                            <span class="font-medium">${data.client_name || '-'}</span>
-                        </div>
-                        ${data.address ? `<div class="flex justify-between"><span class="text-gray-600">Address:</span><span class="font-medium text-right">${data.address}</span></div>` : ''}
-                        ${data.company_id ? `<div class="flex justify-between"><span class="text-gray-600">VAT/Tax ID:</span><span class="font-medium">${data.company_id}</span></div>` : ''}
-                        ${data.contact_person ? `<div class="flex justify-between"><span class="text-gray-600">Contact:</span><span class="font-medium">${data.contact_person}</span></div>` : ''}
-                        ${data.phone ? `<div class="flex justify-between"><span class="text-gray-600">Phone:</span><span class="font-medium">${data.phone}</span></div>` : ''}
-                        ${data.email ? `<div class="flex justify-between"><span class="text-gray-600">Email:</span><span class="font-medium">${data.email}</span></div>` : ''}
-                    </div>
-                `;
+                document.getElementById('form-invoice').classList.remove('hidden');
+                previewBtn.classList.remove('hidden');
+
+                populateClientDropdown('cf-invoice-client', data.client_name);
+                document.getElementById('cf-invoice-amount').value = data.amount || '';
+                document.getElementById('cf-invoice-currency').value = data.currency || 'EUR';
+                document.getElementById('cf-invoice-description').value = data.description || '';
+                document.getElementById('cf-invoice-dates').value = data.work_dates || '';
+
+                updateCurrencyConversion();
+
             } else if (actionType === 'payment') {
                 title.textContent = 'Confirm Payment';
                 icon.className = 'w-12 h-12 rounded-full bg-green-100 flex items-center justify-center';
                 icon.innerHTML = '<i class="fas fa-money-bill-wave text-green-600 text-xl"></i>';
                 confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Record Payment';
 
-                summary.innerHTML = `
-                    <div class="space-y-2">
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Client:</span>
-                            <span class="font-medium">${data.client_name || '-'}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Amount:</span>
-                            <span class="font-medium">${data.currency || 'EUR'} ${(data.amount || 0).toLocaleString()}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Invoice #:</span>
-                            <span class="font-medium">${data.invoice_id || '-'}</span>
-                        </div>
-                        ${data.method ? `<div class="flex justify-between"><span class="text-gray-600">Method:</span><span class="font-medium">${data.method}</span></div>` : ''}
-                    </div>
-                `;
-            } else {
-                // Invoice (default)
-                title.textContent = 'Confirm Invoice Creation';
-                icon.className = 'w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center';
-                icon.innerHTML = '<i class="fas fa-file-invoice text-blue-600 text-xl"></i>';
-                confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Create Invoice';
+                document.getElementById('form-payment').classList.remove('hidden');
 
-                summary.innerHTML = `
-                    <div class="space-y-2">
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Client:</span>
-                            <span class="font-medium">${data.client_name || '-'}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Amount:</span>
-                            <span class="font-medium">${data.currency || 'EUR'} ${(data.amount || 0).toLocaleString()}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Description:</span>
-                            <span class="font-medium">${data.description || '-'}</span>
-                        </div>
-                        ${data.work_dates ? `
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Work Period:</span>
-                            <span class="font-medium">${data.work_dates}</span>
-                        </div>
-                        ` : ''}
-                    </div>
-                `;
+                populateClientDropdown('cf-payment-client', data.client_name);
+                document.getElementById('cf-payment-amount').value = data.amount || '';
+                document.getElementById('cf-payment-currency').value = data.currency || 'EUR';
+                document.getElementById('cf-payment-date').value = data.date || '';
+                document.getElementById('cf-payment-notes').value = data.notes || '';
+
+                if (data.method) document.getElementById('cf-payment-method').value = data.method;
+
+                // Load invoices for selected client
+                loadPaymentInvoices(data.client_name, data.invoice_id);
+
+            } else if (actionType === 'add_client') {
+                title.textContent = 'Add New Client';
+                icon.className = 'w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-user-plus text-purple-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-user-plus mr-2"></i>Add Client';
+
+                document.getElementById('form-client').classList.remove('hidden');
+
+                document.getElementById('cf-client-name').value = data.client_name || '';
+                document.getElementById('cf-client-address').value = data.address || '';
+                document.getElementById('cf-client-company-id').value = data.company_id || '';
+                document.getElementById('cf-client-contact').value = data.contact_person || '';
+                document.getElementById('cf-client-phone').value = data.phone || '';
+                document.getElementById('cf-client-email').value = data.email || '';
+
+            } else if (actionType === 'edit_invoice') {
+                title.textContent = 'Edit Invoice';
+                icon.className = 'w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-edit text-yellow-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Save Changes';
+
+                document.getElementById('form-edit-invoice').classList.remove('hidden');
+
+                document.getElementById('cf-edit-invoice-id').value = data.invoice_id || '';
+                document.getElementById('cf-edit-amount').value = data.new_amount || '';
+                document.getElementById('cf-edit-description').value = data.new_description || '';
+                document.getElementById('cf-edit-status').value = data.new_status || '';
             }
 
             confirmModal.classList.remove('hidden');
             confirmModal.classList.add('flex');
         }
 
+        async function loadPaymentInvoices(clientName, preselectedId) {
+            const sel = document.getElementById('cf-payment-invoice');
+            const client = availableClients.find(c => c.name === clientName);
+            if (!client) {
+                sel.innerHTML = '<option value="">Client not found</option>';
+                return;
+            }
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/clients/${client.id}/unpaid-invoices`);
+                const data = await resp.json();
+                const invoices = data.unpaid_invoices || [];
+
+                if (invoices.length === 0) {
+                    sel.innerHTML = '<option value="">No unpaid invoices</option>';
+                } else {
+                    sel.innerHTML = '<option value="">Select invoice...</option>' +
+                        invoices.map(inv =>
+                            `<option value="${inv.id}" ${inv.id == preselectedId ? 'selected' : ''} data-due="${inv.amount_due}">
+                                #${inv.invoice_number} (${inv.currency} ${inv.amount_due.toLocaleString()} due)
+                            </option>`
+                        ).join('');
+                }
+            } catch (e) {
+                sel.innerHTML = '<option value="">Error loading invoices</option>';
+            }
+        }
+
+        function updateCurrencyConversion() {
+            const amount = parseFloat(document.getElementById('cf-invoice-amount').value) || 0;
+            const currency = document.getElementById('cf-invoice-currency').value;
+            const box = document.getElementById('currency-conversion-box');
+            const text = document.getElementById('conversion-text');
+
+            if (exchangeRate && amount > 0) {
+                if (currency === 'EUR') {
+                    const pln = (amount * exchangeRate).toFixed(2);
+                    text.textContent = `~ PLN ${parseFloat(pln).toLocaleString()} (rate: ${exchangeRate.toFixed(4)})`;
+                    box.classList.remove('hidden');
+                } else {
+                    const eur = (amount / exchangeRate).toFixed(2);
+                    text.textContent = `~ EUR ${parseFloat(eur).toLocaleString()} (rate: ${exchangeRate.toFixed(4)})`;
+                    box.classList.remove('hidden');
+                }
+            } else {
+                box.classList.add('hidden');
+            }
+        }
+
+        // Currency conversion listeners
+        document.getElementById('cf-invoice-amount').addEventListener('input', updateCurrencyConversion);
+        document.getElementById('cf-invoice-currency').addEventListener('change', updateCurrencyConversion);
+
+        // Payment client change -> reload invoices
+        document.getElementById('cf-payment-client').addEventListener('change', (e) => {
+            loadPaymentInvoices(e.target.value);
+        });
+
         function closeConfirmModal() {
             confirmModal.classList.add('hidden');
             confirmModal.classList.remove('flex');
         }
 
-        function closeSuccessModal() {
-            successModal.classList.add('hidden');
-            successModal.classList.remove('flex');
-        }
+        // ============ CONFIRM: DIRECT REST CALLS ============
 
-        // Confirm and execute action
         confirmCreateBtn.addEventListener('click', async () => {
             confirmCreateBtn.disabled = true;
             confirmCreateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
 
             try {
-                const response = await fetch(`${API_BASE}/api/chat/confirm?conversation_id=${conversationId}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
+                let result;
 
-                const data = await response.json();
-                closeConfirmModal();
+                if (currentActionType === 'invoice') {
+                    const clientName = document.getElementById('cf-invoice-client').value;
+                    const client = availableClients.find(c => c.name === clientName);
+                    if (!client) { alert('Please select a client'); resetConfirmBtn(); return; }
 
-                if (response.ok && data.success) {
-                    const successTitle = document.getElementById('success-title');
-                    const successMessage = document.getElementById('success-message');
-                    const successIcon = document.getElementById('success-icon');
-                    const previewBtn = document.getElementById('preview-created-btn');
-
-                    if (data.action_type === 'add_client') {
-                        successTitle.textContent = 'Client Added!';
-                        successIcon.innerHTML = '<i class="fas fa-user-check text-green-600 text-3xl"></i>';
-                        successMessage.textContent = data.message;
-                        previewBtn.classList.add('hidden');
-                    } else if (data.action_type === 'payment') {
-                        successTitle.textContent = 'Payment Recorded!';
-                        successIcon.innerHTML = '<i class="fas fa-check-circle text-green-600 text-3xl"></i>';
-                        successMessage.textContent = data.message;
-                        previewBtn.classList.add('hidden');
+                    const resp = await fetch(`${API_BASE}/api/invoices/?client_id=${client.id}&description=${encodeURIComponent(document.getElementById('cf-invoice-description').value)}&amount=${document.getElementById('cf-invoice-amount').value}&currency=${document.getElementById('cf-invoice-currency').value}&work_dates=${encodeURIComponent(document.getElementById('cf-invoice-dates').value || '')}`, {
+                        method: 'POST'
+                    });
+                    result = await resp.json();
+                    if (resp.ok) {
+                        result.success = true;
+                        result.action_type = 'invoice';
                     } else {
-                        // Invoice
-                        createdInvoiceId = data.invoice_id;
-                        successTitle.textContent = 'Invoice Created!';
-                        successIcon.innerHTML = '<i class="fas fa-file-invoice text-green-600 text-3xl"></i>';
-                        successMessage.textContent = data.message || `Invoice ${data.invoice_number} has been created.`;
-                        previewBtn.classList.remove('hidden');
+                        throw new Error(result.detail || 'Failed to create invoice');
                     }
 
-                    successModal.classList.remove('hidden');
-                    successModal.classList.add('flex');
+                } else if (currentActionType === 'payment') {
+                    const resp = await fetch(`${API_BASE}/api/payments/`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            invoice_id: parseInt(document.getElementById('cf-payment-invoice').value),
+                            amount: parseFloat(document.getElementById('cf-payment-amount').value),
+                            currency: document.getElementById('cf-payment-currency').value,
+                            date: document.getElementById('cf-payment-date').value || null,
+                            method: document.getElementById('cf-payment-method').value || null,
+                            notes: document.getElementById('cf-payment-notes').value || null
+                        })
+                    });
+                    result = await resp.json();
+                    if (resp.ok) {
+                        result.success = true;
+                        result.action_type = 'payment';
+                    } else {
+                        throw new Error(result.detail || 'Failed to record payment');
+                    }
+
+                } else if (currentActionType === 'add_client') {
+                    const resp = await fetch(`${API_BASE}/api/clients/`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: document.getElementById('cf-client-name').value,
+                            address: document.getElementById('cf-client-address').value,
+                            company_id: document.getElementById('cf-client-company-id').value,
+                            email: document.getElementById('cf-client-email').value || null
+                        })
+                    });
+                    result = await resp.json();
+                    if (resp.ok) {
+                        result.success = true;
+                        result.action_type = 'add_client';
+                        await loadClients(); // Refresh client list
+                    } else {
+                        throw new Error(result.detail || 'Failed to add client');
+                    }
+
+                } else if (currentActionType === 'edit_invoice') {
+                    // Use the pending action confirm flow for edits
+                    const resp = await fetch(`${API_BASE}/api/chat/confirm?conversation_id=${conversationId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    result = await resp.json();
+                    if (!resp.ok) {
+                        throw new Error(result.detail || 'Failed to edit invoice');
+                    }
+                }
+
+                closeConfirmModal();
+
+                if (result && result.success) {
+                    // Store for undo
+                    lastCreatedAction = {
+                        type: result.action_type,
+                        id: result.invoice_id || result.payment_id || result.client_id,
+                        data: result
+                    };
+
+                    // Show undo toast
+                    showUndoToast(result.message || 'Action completed successfully!');
+
+                    // Add success message to chat
+                    addMessage(result.message || 'Done!');
 
                     // Reset conversation
                     conversationId = null;
+                    localStorage.removeItem('invoice_tracker_session');
                     extractedData = null;
                     currentActionType = null;
-                } else {
-                    const errorMsg = data.detail || data.message || 'Action failed';
-                    addMessage(`Error: ${errorMsg}`);
                 }
+
             } catch (error) {
                 closeConfirmModal();
-                addMessage('Error processing action. Please try again.');
+                addMessage(`Error: ${error.message}`);
                 console.error('Confirm error:', error);
             }
 
+            resetConfirmBtn();
+        });
+
+        function resetConfirmBtn() {
             confirmCreateBtn.disabled = false;
             confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Confirm';
-        });
+        }
 
-        // Preview created invoice
-        previewCreatedBtn.addEventListener('click', () => {
-            if (createdInvoiceId) {
-                window.open(`${API_BASE}/api/invoices/${createdInvoiceId}/preview`, '_blank');
+        // ============ PREVIEW BEFORE CONFIRM ============
+
+        document.getElementById('preview-draft-btn').addEventListener('click', () => {
+            const clientName = document.getElementById('cf-invoice-client').value;
+            const amount = document.getElementById('cf-invoice-amount').value;
+            const currency = document.getElementById('cf-invoice-currency').value;
+            const description = document.getElementById('cf-invoice-description').value;
+
+            if (!clientName || !amount) {
+                alert('Please fill in client and amount to preview');
+                return;
             }
+
+            // POST to preview endpoint
+            fetch(`${API_BASE}/api/invoices/preview`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_name: clientName,
+                    amount: parseFloat(amount),
+                    currency: currency,
+                    description: description,
+                    work_dates: document.getElementById('cf-invoice-dates').value || null
+                })
+            }).then(resp => resp.text()).then(html => {
+                const frame = document.getElementById('preview-frame');
+                frame.srcdoc = html;
+                document.getElementById('preview-overlay').classList.remove('hidden');
+            }).catch(err => {
+                alert('Preview failed: ' + err.message);
+            });
         });
 
-        // Form submit
-        chatForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const message = chatInput.value.trim();
-            if (message) {
-                sendMessage(message);
+        function openPreviewOverlay(url) {
+            document.getElementById('preview-frame').src = url;
+            document.getElementById('preview-overlay').classList.remove('hidden');
+        }
+
+        function closePreviewOverlay(e) {
+            if (e.target === document.getElementById('preview-overlay')) {
+                document.getElementById('preview-overlay').classList.add('hidden');
             }
-        });
+        }
 
-        // Clear chat
+        // ============ UNDO TOAST ============
+
+        function showUndoToast(message) {
+            document.getElementById('undo-message').textContent = message;
+            undoCountdown = 10;
+            document.getElementById('undo-countdown').textContent = `(${undoCountdown}s)`;
+            undoToast.classList.remove('hidden');
+
+            clearInterval(undoTimer);
+            undoTimer = setInterval(() => {
+                undoCountdown--;
+                document.getElementById('undo-countdown').textContent = `(${undoCountdown}s)`;
+                if (undoCountdown <= 0) {
+                    clearInterval(undoTimer);
+                    undoToast.classList.add('hidden');
+                    lastCreatedAction = null;
+                }
+            }, 1000);
+        }
+
+        async function undoLastAction() {
+            if (!lastCreatedAction) return;
+            clearInterval(undoTimer);
+            undoToast.classList.add('hidden');
+
+            const { type, id } = lastCreatedAction;
+            let url = '';
+
+            if (type === 'invoice') url = `${API_BASE}/api/invoices/${id}`;
+            else if (type === 'payment') url = `${API_BASE}/api/payments/${id}`;
+            else if (type === 'add_client') url = `${API_BASE}/api/clients/${id}`;
+            else { addMessage('Cannot undo this action type.'); return; }
+
+            try {
+                const resp = await fetch(url, { method: 'DELETE' });
+                if (resp.ok) {
+                    addMessage(`Undo successful! ${type} #${id} has been removed.`);
+                } else {
+                    const err = await resp.json();
+                    addMessage(`Undo failed: ${err.detail || 'Unknown error'}`);
+                }
+            } catch (e) {
+                addMessage('Undo failed: connection error.');
+            }
+
+            lastCreatedAction = null;
+        }
+
+        // ============ CLEAR CHAT ============
+
         clearBtn.addEventListener('click', async () => {
             if (conversationId) {
                 await fetch(`${API_BASE}/api/chat/${conversationId}`, { method: 'DELETE' });
@@ -484,6 +861,9 @@
             conversationId = null;
             extractedData = null;
             currentActionType = null;
+            localStorage.removeItem('invoice_tracker_chat');
+            localStorage.removeItem('invoice_tracker_session');
+
             chatMessages.innerHTML = `
                 <div class="chat-message flex items-start">
                     <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
@@ -493,12 +873,33 @@
                         <p class="text-gray-800">Chat cleared! How can I help you?</p>
                         <p class="text-gray-500 text-xs mt-2">Type <strong>/help</strong> to see what I can do</p>
                     </div>
-                </div>
-            `;
+                </div>`;
+        });
+
+        // ============ FORM SUBMIT ============
+
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const message = chatInput.value.trim();
+            if (message) sendMessage(message);
+        });
+
+        // Escape to close modals
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeConfirmModal();
+                document.getElementById('preview-overlay').classList.add('hidden');
+            }
+        });
+
+        // Click outside to close confirm modal
+        confirmModal.addEventListener('click', (e) => {
+            if (e.target === confirmModal) closeConfirmModal();
         });
 
         // Focus input on load
         chatInput.focus();
+        init();
     </script>
 </body>
 </html>

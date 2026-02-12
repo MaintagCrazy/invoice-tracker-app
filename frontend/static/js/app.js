@@ -12,6 +12,7 @@ let currentInvoiceId = null;
 let currentClientId = null;
 let currentClientFilter = null; // client name being filtered
 let currentView = 'invoices'; // 'invoices' or 'payments'
+let exchangeRate = null; // EUR->PLN rate from NBP
 
 // DOM Elements
 const filterStatus = document.getElementById('filter-status');
@@ -40,6 +41,24 @@ function formatDate(dateStr) {
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return dateStr; // Return raw string if invalid
     return date.toLocaleDateString('de-DE');
+}
+
+// Format PLN equivalent
+function formatPlnEquiv(eurAmount) {
+    if (!exchangeRate || !eurAmount) return '';
+    const pln = eurAmount * exchangeRate;
+    return `(~ PLN ${pln.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
+}
+
+// Fetch EUR/PLN exchange rate from NBP API
+async function fetchExchangeRate() {
+    try {
+        const resp = await fetch('https://api.nbp.pl/api/exchangerates/rates/a/eur/?format=json');
+        const data = await resp.json();
+        exchangeRate = data.rates[0].mid;
+    } catch (e) {
+        exchangeRate = 4.30; // Fallback
+    }
 }
 
 // ============ MOBILE DETECTION ============
@@ -127,9 +146,21 @@ async function loadStats() {
         document.getElementById('stat-draft').textContent = stats.draft_count;
         document.getElementById('stat-sent').textContent = stats.sent_count;
         document.getElementById('stat-paid').textContent = stats.paid_count;
-        document.getElementById('stat-due').textContent = formatCurrency(stats.total_due || 0);
-        document.getElementById('stat-received').textContent = formatCurrency(stats.total_paid || 0);
-        document.getElementById('stat-total-outstanding').textContent = formatCurrency(stats.total_due || 0);
+        const dueEl = document.getElementById('stat-due');
+        const recvEl = document.getElementById('stat-received');
+        const outEl = document.getElementById('stat-total-outstanding');
+
+        dueEl.textContent = formatCurrency(stats.total_due || 0);
+        recvEl.textContent = formatCurrency(stats.total_paid || 0);
+        outEl.textContent = formatCurrency(stats.total_due || 0);
+
+        // PLN equivalents
+        if (exchangeRate) {
+            dueEl.title = formatPlnEquiv(stats.total_due || 0);
+            recvEl.title = formatPlnEquiv(stats.total_paid || 0);
+            const plnStr = formatPlnEquiv(stats.total_due || 0);
+            if (plnStr) outEl.innerHTML = formatCurrency(stats.total_due || 0) + `<span class="block text-sm font-normal text-red-400">${plnStr}</span>`;
+        }
 
         // Mobile outstanding
         const mobileOut = document.getElementById('mobile-outstanding');
@@ -523,7 +554,7 @@ sendBtn.addEventListener('click', async () => {
         const response = await fetch(`${API_BASE}/api/invoices/${currentInvoiceId}/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ confirmed: true })
         });
 
         const result = await response.json();
@@ -917,7 +948,8 @@ async function loadDriveFiles() {
 
 // ============ INIT ============
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await fetchExchangeRate();
     loadStats();
     loadInvoices();
     loadClients();

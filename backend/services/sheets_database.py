@@ -307,23 +307,29 @@ class SheetsDatabaseService:
         return max(inv['file_number'] for inv in invoices) + 1
 
     def get_next_invoice_number(self) -> str:
-        """Generate invoice number: XX/MM/YYYY"""
+        """Generate invoice number: XX/MM/YYYY
+        Reads Invoice Number column directly from sheet to avoid missing any rows.
+        """
         now = datetime.now()
         month_suffix = f"/{now.month:02d}/{now.year}"
 
-        invoices = self.get_invoices()
-        month_invoices = [
-            inv for inv in invoices
-            if inv['invoice_number'].endswith(month_suffix)
-        ]
+        # Read Invoice Number column directly (column C = index 3)
+        # This avoids get_invoices() which can skip rows with missing File #
+        try:
+            all_values = self.db_worksheet.col_values(3)  # Column C = Invoice Number
+        except Exception as e:
+            logger.error(f"Error reading invoice numbers: {e}")
+            all_values = []
 
         seq_numbers = []
-        for inv in month_invoices:
-            try:
-                seq = int(inv['invoice_number'].split('/')[0])
-                seq_numbers.append(seq)
-            except (ValueError, IndexError):
-                pass
+        for val in all_values[1:]:  # Skip header row
+            val = str(val).strip()
+            if val.endswith(month_suffix):
+                try:
+                    seq = int(val.split('/')[0])
+                    seq_numbers.append(seq)
+                except (ValueError, IndexError):
+                    pass
 
         next_seq = max(seq_numbers, default=0) + 1
         return f"{next_seq:02d}/{now.month:02d}/{now.year}"
@@ -395,6 +401,57 @@ class SheetsDatabaseService:
         except Exception as e:
             logger.error(f"Error creating invoice: {e}")
             raise
+
+    def update_invoice(self, file_number: int, updates: Dict[str, Any]) -> bool:
+        """Update invoice fields. Accepts: description, amount, status, work_dates"""
+        try:
+            all_data = self.db_worksheet.get_all_records()
+            for idx, row in enumerate(all_data):
+                if int(row.get('File #', 0)) == file_number:
+                    row_num = idx + 2  # 1 for header, 1 for 0-index
+                    # Column mapping: Description=7(G), Amount=8(H), Currency=9(I), Status=10(J)
+                    if "description" in updates:
+                        self.db_worksheet.update_cell(row_num, 7, updates["description"])
+                    if "amount" in updates:
+                        self.db_worksheet.update_cell(row_num, 8, float(updates["amount"]))
+                    if "status" in updates:
+                        self.db_worksheet.update_cell(row_num, 10, updates["status"])
+                    logger.info(f"Updated invoice {file_number}: {list(updates.keys())}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error updating invoice {file_number}: {e}")
+            return False
+
+    def delete_invoice(self, file_number: int) -> bool:
+        """Delete an invoice row from the Database sheet"""
+        try:
+            all_data = self.db_worksheet.get_all_records()
+            for idx, row in enumerate(all_data):
+                if int(row.get('File #', 0)) == file_number:
+                    row_num = idx + 2
+                    self.db_worksheet.delete_rows(row_num)
+                    logger.info(f"Deleted invoice {file_number}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting invoice {file_number}: {e}")
+            return False
+
+    def delete_client(self, client_id: int) -> bool:
+        """Delete a client row from the Clients sheet"""
+        try:
+            all_data = self.clients_worksheet.get_all_records()
+            for idx, row in enumerate(all_data):
+                if int(row.get('ID', 0)) == client_id:
+                    row_num = idx + 2
+                    self.clients_worksheet.delete_rows(row_num)
+                    logger.info(f"Deleted client {client_id}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting client {client_id}: {e}")
+            return False
 
     def update_invoice_status(self, file_number: int, status: str) -> bool:
         """Update invoice status in sheet"""

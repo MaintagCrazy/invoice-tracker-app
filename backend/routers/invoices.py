@@ -2,8 +2,9 @@
 Invoice endpoints - using Google Sheets as database
 """
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Response
+from pydantic import BaseModel
 
 from services.sheets_database import get_sheets_db
 from services.pdf_service import get_pdf_service, WEASYPRINT_AVAILABLE
@@ -191,6 +192,81 @@ def download_invoice_pdf(invoice_id: int):
             "Content-Disposition": f"attachment; filename={filename}.html"
         }
     )
+
+
+class InvoicePreviewRequest(BaseModel):
+    client_name: str
+    amount: float
+    currency: str = "EUR"
+    description: str = ""
+    work_dates: Optional[str] = None
+
+
+class InvoicePatchRequest(BaseModel):
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    status: Optional[str] = None
+
+
+@router.post("/preview")
+def preview_invoice_draft(data: InvoicePreviewRequest):
+    """Generate HTML preview from draft data (no creation)"""
+    from datetime import datetime, timedelta
+    db = get_sheets_db()
+    pdf_service = get_pdf_service()
+
+    client = db.get_client_by_name(data.client_name)
+    client_data = {
+        "name": client.get("name", data.client_name) if client else data.client_name,
+        "address": client.get("address", "") if client else "",
+        "company_id": client.get("company_id", "") if client else ""
+    }
+
+    now = datetime.now()
+    invoice_data = {
+        "invoice_number": "PREVIEW",
+        "description": data.description,
+        "amount": data.amount,
+        "currency": data.currency,
+        "issue_date": now.strftime("%d.%m.%Y"),
+        "due_date": (now + timedelta(days=30)).strftime("%d.%m.%Y")
+    }
+
+    html = pdf_service.generate_html(invoice_data, client_data)
+    return Response(content=html.encode('utf-8'), media_type="text/html")
+
+
+@router.patch("/{invoice_id}")
+def patch_invoice(invoice_id: int, data: InvoicePatchRequest):
+    """Update specific fields of an invoice"""
+    db = get_sheets_db()
+
+    updates = {}
+    if data.description is not None:
+        updates["description"] = data.description
+    if data.amount is not None:
+        updates["amount"] = data.amount
+    if data.status is not None:
+        updates["status"] = data.status
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    success = db.update_invoice(invoice_id, updates)
+    if not success:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return {"success": True, "invoice_id": invoice_id, "updated": list(updates.keys())}
+
+
+@router.delete("/{invoice_id}")
+def delete_invoice(invoice_id: int):
+    """Delete an invoice"""
+    db = get_sheets_db()
+    success = db.delete_invoice(invoice_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return {"success": True, "invoice_id": invoice_id}
 
 
 @router.post("/{invoice_id}/mark-paid")

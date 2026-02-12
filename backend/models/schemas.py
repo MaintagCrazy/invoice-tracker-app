@@ -84,8 +84,8 @@ class InvoiceWithClient(Invoice):
 
 class ChatMessage(BaseModel):
     """Chat message from user"""
-    message: str
-    conversation_id: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=2000)
+    conversation_id: Optional[str] = Field(None, max_length=100)
 
 
 class ChatResponse(BaseModel):
@@ -98,10 +98,11 @@ class ChatResponse(BaseModel):
 
 
 class SendEmailRequest(BaseModel):
-    """Request to send invoice via email"""
+    """Request to send invoice via email. confirmed=True required."""
     additional_recipients: Optional[List[str]] = None
     custom_subject: Optional[str] = None
     custom_message: Optional[str] = None
+    confirmed: bool = False
 
 
 class EmailLog(BaseModel):
