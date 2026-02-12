@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Invoice Tracker - Create Invoice</title>
+    <title>Invoice Tracker - AI Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -31,6 +31,20 @@
             0%, 80%, 100% { transform: scale(0); }
             40% { transform: scale(1); }
         }
+        .quick-action {
+            transition: all 0.2s;
+        }
+        .quick-action:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        /* Format AI messages with line breaks */
+        .ai-message-content {
+            white-space: pre-line;
+        }
+        .ai-message-content ul, .ai-message-content ol {
+            padding-left: 1.2em;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col">
@@ -44,7 +58,7 @@
                 </div>
                 <div class="flex items-center space-x-4">
                     <a href="/" class="text-gray-600 hover:text-blue-600">Dashboard</a>
-                    <a href="/chat" class="text-blue-600 font-medium">+ New Invoice</a>
+                    <a href="/chat" class="text-blue-600 font-medium">AI Assistant</a>
                 </div>
             </div>
         </div>
@@ -55,8 +69,8 @@
         <div class="bg-white rounded-lg shadow-lg flex-1 flex flex-col overflow-hidden">
             <!-- Chat Header -->
             <div class="border-b px-6 py-4">
-                <h2 class="text-lg font-semibold text-gray-900">Create New Invoice</h2>
-                <p class="text-sm text-gray-500">Chat with AI to create your invoice</p>
+                <h2 class="text-lg font-semibold text-gray-900">AI Assistant</h2>
+                <p class="text-sm text-gray-500">Chat naturally — I can create invoices, manage clients, and answer questions</p>
             </div>
 
             <!-- Chat Messages -->
@@ -66,17 +80,37 @@
                     <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
                         <i class="fas fa-robot text-white text-sm"></i>
                     </div>
-                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-md">
-                        <p class="text-gray-800">Hello! I'll help you create an invoice. Just tell me:</p>
+                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-lg">
+                        <p class="text-gray-800">Hello! I'm your invoice assistant. I can help you with:</p>
                         <ul class="text-gray-600 text-sm mt-2 space-y-1">
-                            <li>- Client name (Bauceram, Clinker, Laufenberg)</li>
-                            <li>- Amount (in EUR)</li>
-                            <li>- Description of work</li>
-                            <li>- Work period (optional)</li>
+                            <li><i class="fas fa-file-invoice text-blue-500 w-5"></i> Create invoices</li>
+                            <li><i class="fas fa-money-bill-wave text-green-500 w-5"></i> Record payments</li>
+                            <li><i class="fas fa-user-plus text-purple-500 w-5"></i> Add new clients</li>
+                            <li><i class="fas fa-users text-orange-500 w-5"></i> List & manage clients</li>
+                            <li><i class="fas fa-chart-bar text-indigo-500 w-5"></i> Check balances & stats</li>
                         </ul>
-                        <p class="text-gray-800 mt-2">For example: "Create invoice for Bauceram, 30k EUR, construction work January"</p>
+                        <p class="text-gray-500 text-xs mt-3">Type <strong>/help</strong> anytime for full details</p>
                     </div>
                 </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="border-t border-gray-100 px-4 py-2 flex gap-2 overflow-x-auto">
+                <button onclick="sendMessage('/help')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                    <i class="fas fa-question-circle mr-1"></i>/help
+                </button>
+                <button onclick="sendMessage('Show my clients')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                    <i class="fas fa-users mr-1"></i>My clients
+                </button>
+                <button onclick="sendMessage('Create a new invoice')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                    <i class="fas fa-plus mr-1"></i>New invoice
+                </button>
+                <button onclick="sendMessage('Record a payment')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                    <i class="fas fa-money-bill mr-1"></i>Record payment
+                </button>
+                <button onclick="sendMessage('Add a new client')" class="quick-action text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full whitespace-nowrap hover:bg-gray-200">
+                    <i class="fas fa-user-plus mr-1"></i>Add client
+                </button>
             </div>
 
             <!-- Input Area -->
@@ -85,7 +119,7 @@
                     <input
                         type="text"
                         id="chat-input"
-                        placeholder="Type your message..."
+                        placeholder="Type a message... (e.g. 'add new client Hans Schuy GmbH')"
                         class="flex-1 border rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         autocomplete="off"
                     >
@@ -96,7 +130,7 @@
             </div>
         </div>
 
-        <!-- Quick Actions -->
+        <!-- Bottom Actions -->
         <div class="mt-4 flex justify-center space-x-4">
             <button id="clear-btn" class="text-gray-500 hover:text-gray-700">
                 <i class="fas fa-trash mr-2"></i>Clear Chat
@@ -104,23 +138,23 @@
         </div>
     </main>
 
-    <!-- Confirmation Modal -->
+    <!-- Confirmation Modal (for invoices, payments, and new clients) -->
     <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4">
             <div class="p-6">
                 <div class="flex items-center mb-4">
-                    <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                    <div id="confirm-icon" class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
                         <i class="fas fa-check text-green-600 text-xl"></i>
                     </div>
-                    <h3 class="ml-4 text-lg font-semibold">Confirm Invoice Creation</h3>
+                    <h3 id="confirm-title" class="ml-4 text-lg font-semibold">Confirm Action</h3>
                 </div>
-                <div id="invoice-summary" class="bg-gray-50 rounded-lg p-4 mb-4">
+                <div id="action-summary" class="bg-gray-50 rounded-lg p-4 mb-4">
                     <!-- Filled by JS -->
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button onclick="closeConfirmModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
                     <button id="confirm-create-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                        <i class="fas fa-check mr-2"></i>Create Invoice
+                        <i class="fas fa-check mr-2"></i>Confirm
                     </button>
                 </div>
             </div>
@@ -131,15 +165,18 @@
     <div id="success-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4">
             <div class="p-6 text-center">
-                <div class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                <div id="success-icon" class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
                     <i class="fas fa-check text-green-600 text-3xl"></i>
                 </div>
-                <h3 class="text-xl font-semibold mb-2">Invoice Created!</h3>
+                <h3 id="success-title" class="text-xl font-semibold mb-2">Success!</h3>
                 <p id="success-message" class="text-gray-600 mb-4"></p>
-                <div class="flex justify-center space-x-3">
+                <div id="success-actions" class="flex justify-center space-x-3">
                     <a href="/" class="px-4 py-2 border rounded hover:bg-gray-50">Go to Dashboard</a>
-                    <button id="preview-created-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                    <button id="preview-created-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 hidden">
                         <i class="fas fa-file-pdf mr-2"></i>Preview PDF
+                    </button>
+                    <button onclick="closeSuccessModal()" class="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700">
+                        Continue chatting
                     </button>
                 </div>
             </div>
@@ -150,6 +187,7 @@
         const API_BASE = '';
         let conversationId = null;
         let extractedData = null;
+        let currentActionType = null;
         let createdInvoiceId = null;
 
         // Elements
@@ -161,6 +199,22 @@
         const successModal = document.getElementById('success-modal');
         const confirmCreateBtn = document.getElementById('confirm-create-btn');
         const previewCreatedBtn = document.getElementById('preview-created-btn');
+
+        // Format AI text — convert newlines and basic markdown
+        function formatAIText(text) {
+            if (!text) return '';
+            // Escape HTML
+            let formatted = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            // Bold
+            formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            // Bullet points: lines starting with - or *
+            formatted = formatted.replace(/^[\-\*]\s+(.*)$/gm, '<li>$1</li>');
+            // Wrap consecutive <li> in <ul>
+            formatted = formatted.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="list-disc ml-4 space-y-1">$&</ul>');
+            // Numbered lists
+            formatted = formatted.replace(/^\d+\.\s+(.*)$/gm, '<li>$1</li>');
+            return formatted;
+        }
 
         // Add message to chat
         function addMessage(content, isUser = false) {
@@ -181,8 +235,8 @@
                     <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
                         <i class="fas fa-robot text-white text-sm"></i>
                     </div>
-                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-md">
-                        <p class="text-gray-800">${content}</p>
+                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-lg">
+                        <div class="text-gray-800 ai-message-content">${formatAIText(content)}</div>
                     </div>
                 `;
             }
@@ -239,43 +293,99 @@
                 conversationId = data.conversation_id;
                 addMessage(data.response);
 
-                // Check if ready to create
+                // Check if ready to confirm an action
                 if (data.needs_confirmation && data.extracted_data) {
                     extractedData = data.extracted_data;
-                    showConfirmModal(extractedData);
+                    currentActionType = data.extracted_data.action_type || 'invoice';
+                    showConfirmModal(data.extracted_data);
                 }
             } catch (error) {
                 removeTypingIndicator();
-                addMessage('Sorry, there was an error. Please try again.');
+                addMessage('Sorry, there was a connection error. Please try again.');
                 console.error('Chat error:', error);
             }
         }
 
-        // Show confirmation modal
+        // Show confirmation modal — adapts based on action type
         function showConfirmModal(data) {
-            const summary = document.getElementById('invoice-summary');
-            summary.innerHTML = `
-                <div class="space-y-2">
-                    <div class="flex justify-between">
-                        <span class="text-gray-600">Client:</span>
-                        <span class="font-medium">${data.client_name || '-'}</span>
+            const summary = document.getElementById('action-summary');
+            const title = document.getElementById('confirm-title');
+            const icon = document.getElementById('confirm-icon');
+            const actionType = data.action_type || 'invoice';
+
+            if (actionType === 'add_client') {
+                title.textContent = 'Add New Client';
+                icon.className = 'w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-user-plus text-purple-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-user-plus mr-2"></i>Add Client';
+
+                summary.innerHTML = `
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Company:</span>
+                            <span class="font-medium">${data.client_name || '-'}</span>
+                        </div>
+                        ${data.address ? `<div class="flex justify-between"><span class="text-gray-600">Address:</span><span class="font-medium text-right">${data.address}</span></div>` : ''}
+                        ${data.company_id ? `<div class="flex justify-between"><span class="text-gray-600">VAT/Tax ID:</span><span class="font-medium">${data.company_id}</span></div>` : ''}
+                        ${data.contact_person ? `<div class="flex justify-between"><span class="text-gray-600">Contact:</span><span class="font-medium">${data.contact_person}</span></div>` : ''}
+                        ${data.phone ? `<div class="flex justify-between"><span class="text-gray-600">Phone:</span><span class="font-medium">${data.phone}</span></div>` : ''}
+                        ${data.email ? `<div class="flex justify-between"><span class="text-gray-600">Email:</span><span class="font-medium">${data.email}</span></div>` : ''}
                     </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-600">Amount:</span>
-                        <span class="font-medium">${data.currency || 'EUR'} ${(data.amount || 0).toLocaleString()}</span>
+                `;
+            } else if (actionType === 'payment') {
+                title.textContent = 'Confirm Payment';
+                icon.className = 'w-12 h-12 rounded-full bg-green-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-money-bill-wave text-green-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Record Payment';
+
+                summary.innerHTML = `
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Client:</span>
+                            <span class="font-medium">${data.client_name || '-'}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Amount:</span>
+                            <span class="font-medium">${data.currency || 'EUR'} ${(data.amount || 0).toLocaleString()}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Invoice #:</span>
+                            <span class="font-medium">${data.invoice_id || '-'}</span>
+                        </div>
+                        ${data.method ? `<div class="flex justify-between"><span class="text-gray-600">Method:</span><span class="font-medium">${data.method}</span></div>` : ''}
                     </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-600">Description:</span>
-                        <span class="font-medium">${data.description || '-'}</span>
+                `;
+            } else {
+                // Invoice (default)
+                title.textContent = 'Confirm Invoice Creation';
+                icon.className = 'w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-file-invoice text-blue-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Create Invoice';
+
+                summary.innerHTML = `
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Client:</span>
+                            <span class="font-medium">${data.client_name || '-'}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Amount:</span>
+                            <span class="font-medium">${data.currency || 'EUR'} ${(data.amount || 0).toLocaleString()}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Description:</span>
+                            <span class="font-medium">${data.description || '-'}</span>
+                        </div>
+                        ${data.work_dates ? `
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Work Period:</span>
+                            <span class="font-medium">${data.work_dates}</span>
+                        </div>
+                        ` : ''}
                     </div>
-                    ${data.work_dates ? `
-                    <div class="flex justify-between">
-                        <span class="text-gray-600">Work Period:</span>
-                        <span class="font-medium">${data.work_dates}</span>
-                    </div>
-                    ` : ''}
-                </div>
-            `;
+                `;
+            }
+
             confirmModal.classList.remove('hidden');
             confirmModal.classList.add('flex');
         }
@@ -285,10 +395,15 @@
             confirmModal.classList.remove('flex');
         }
 
-        // Confirm and create invoice
+        function closeSuccessModal() {
+            successModal.classList.add('hidden');
+            successModal.classList.remove('flex');
+        }
+
+        // Confirm and execute action
         confirmCreateBtn.addEventListener('click', async () => {
             confirmCreateBtn.disabled = true;
-            confirmCreateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Creating...';
+            confirmCreateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
 
             try {
                 const response = await fetch(`${API_BASE}/api/chat/confirm?conversation_id=${conversationId}`, {
@@ -299,27 +414,50 @@
                 const data = await response.json();
                 closeConfirmModal();
 
-                if (data.success) {
-                    createdInvoiceId = data.invoice_id;
-                    document.getElementById('success-message').textContent =
-                        `Invoice ${data.invoice_number} has been created.`;
+                if (response.ok && data.success) {
+                    const successTitle = document.getElementById('success-title');
+                    const successMessage = document.getElementById('success-message');
+                    const successIcon = document.getElementById('success-icon');
+                    const previewBtn = document.getElementById('preview-created-btn');
+
+                    if (data.action_type === 'add_client') {
+                        successTitle.textContent = 'Client Added!';
+                        successIcon.innerHTML = '<i class="fas fa-user-check text-green-600 text-3xl"></i>';
+                        successMessage.textContent = data.message;
+                        previewBtn.classList.add('hidden');
+                    } else if (data.action_type === 'payment') {
+                        successTitle.textContent = 'Payment Recorded!';
+                        successIcon.innerHTML = '<i class="fas fa-check-circle text-green-600 text-3xl"></i>';
+                        successMessage.textContent = data.message;
+                        previewBtn.classList.add('hidden');
+                    } else {
+                        // Invoice
+                        createdInvoiceId = data.invoice_id;
+                        successTitle.textContent = 'Invoice Created!';
+                        successIcon.innerHTML = '<i class="fas fa-file-invoice text-green-600 text-3xl"></i>';
+                        successMessage.textContent = data.message || `Invoice ${data.invoice_number} has been created.`;
+                        previewBtn.classList.remove('hidden');
+                    }
+
                     successModal.classList.remove('hidden');
                     successModal.classList.add('flex');
 
-                    // Clear conversation
+                    // Reset conversation
                     conversationId = null;
                     extractedData = null;
+                    currentActionType = null;
                 } else {
-                    addMessage(`Error: ${data.detail || 'Failed to create invoice'}`);
+                    const errorMsg = data.detail || data.message || 'Action failed';
+                    addMessage(`Error: ${errorMsg}`);
                 }
             } catch (error) {
                 closeConfirmModal();
-                addMessage('Error creating invoice. Please try again.');
-                console.error('Create error:', error);
+                addMessage('Error processing action. Please try again.');
+                console.error('Confirm error:', error);
             }
 
             confirmCreateBtn.disabled = false;
-            confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Create Invoice';
+            confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Confirm';
         });
 
         // Preview created invoice
@@ -345,20 +483,15 @@
             }
             conversationId = null;
             extractedData = null;
+            currentActionType = null;
             chatMessages.innerHTML = `
                 <div class="chat-message flex items-start">
                     <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
                         <i class="fas fa-robot text-white text-sm"></i>
                     </div>
-                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-md">
-                        <p class="text-gray-800">Hello! I'll help you create an invoice. Just tell me:</p>
-                        <ul class="text-gray-600 text-sm mt-2 space-y-1">
-                            <li>- Client name (Bauceram, Clinker, Laufenberg)</li>
-                            <li>- Amount (in EUR)</li>
-                            <li>- Description of work</li>
-                            <li>- Work period (optional)</li>
-                        </ul>
-                        <p class="text-gray-800 mt-2">For example: "Create invoice for Bauceram, 30k EUR, construction work January"</p>
+                    <div class="ml-3 bg-gray-100 rounded-lg px-4 py-3 max-w-lg">
+                        <p class="text-gray-800">Chat cleared! How can I help you?</p>
+                        <p class="text-gray-500 text-xs mt-2">Type <strong>/help</strong> to see what I can do</p>
                     </div>
                 </div>
             `;

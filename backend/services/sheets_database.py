@@ -22,68 +22,15 @@ DATABASE_TAB = "Database"
 CLIENTS_TAB = "Clients"
 PAYMENTS_TAB = "Payments"
 
-# Client data (hardcoded for now, can move to sheet later)
-DEFAULT_CLIENTS = {
-    1: {
-        "id": 1,
-        "name": "Bauceram GmbH",
-        "address": "Am Tonscuppen.2\n53347 Alfter",
-        "company_id": "DE306313681",
-        "email": "info@bauceram.de"
-    },
-    2: {
-        "id": 2,
-        "name": "Clinker Bau Schweiz GmbH",
-        "address": "Hinterbergstrasse 26\n6312 Steinhausen",
-        "company_id": "CHE-271.aborak.764",
-        "email": "info@clinkerbau.ch"
-    },
-    3: {
-        "id": 3,
-        "name": "Stuckgeschäft Laufenberg",
-        "address": "Servatiusweg 33\n53332 Bornheim",
-        "company_id": "",
-        "email": None
-    },
-    4: {
-        "id": 4,
-        "name": "Schneider & Bitzer GmbH",
-        "address": "",
-        "company_id": "",
-        "email": None
-    },
-    5: {
-        "id": 5,
-        "name": "Hillenbrand Bauunternehmen GmbH",
-        "address": "",
-        "company_id": "",
-        "email": None
-    },
-    6: {
-        "id": 6,
-        "name": "BUDMAT",
-        "address": "",
-        "company_id": "",
-        "email": None
-    }
-}
-
-# Map client names to IDs
-CLIENT_NAME_TO_ID = {
-    "Bauceram GmbH": 1,
-    "BauCeram GmbH": 1,
-    "bauceram": 1,
-    "Clinker Bau Schweiz GmbH": 2,
-    "clinker": 2,
-    "Stuckgeschäft Laufenberg": 3,
-    "laufenberg": 3,
-    "Schneider & Bitzer GmbH": 4,
-    "schneider": 4,
-    "Hillenbrand Bauunternehmen GmbH": 5,
-    "hillenbrand": 5,
-    "BUDMAT": 6,
-    "budmat": 6,
-}
+# Seed clients — written to Clients sheet on first run, then sheet is source of truth
+SEED_CLIENTS = [
+    {"name": "Bauceram GmbH", "address": "Am Tonscuppen.2, 53347 Alfter", "company_id": "DE306313681", "email": "info@bauceram.de", "contact_person": "", "phone": ""},
+    {"name": "Clinker Bau Schweiz GmbH", "address": "Hinterbergstrasse 26, 6312 Steinhausen", "company_id": "CHE-271.aborak.764", "email": "info@clinkerbau.ch", "contact_person": "", "phone": ""},
+    {"name": "Stuckgeschäft Laufenberg", "address": "Servatiusweg 33, 53332 Bornheim", "company_id": "", "email": "", "contact_person": "", "phone": ""},
+    {"name": "Schneider & Bitzer GmbH", "address": "", "company_id": "", "email": "", "contact_person": "", "phone": ""},
+    {"name": "Hillenbrand Bauunternehmen GmbH", "address": "", "company_id": "", "email": "", "contact_person": "", "phone": ""},
+    {"name": "BUDMAT", "address": "", "company_id": "", "email": "", "contact_person": "", "phone": ""},
+]
 
 
 class SheetsDatabaseService:
@@ -127,6 +74,7 @@ class SheetsDatabaseService:
             self.sheet = self.gc.open_by_key(SHEET_ID)
             self.db_worksheet = self.sheet.worksheet(DATABASE_TAB)
             self._init_payments_worksheet()
+            self._init_clients_worksheet()
             logger.info(f"Connected to Google Sheet: {SHEET_ID}")
 
         except Exception as e:
@@ -149,27 +97,116 @@ class SheetsDatabaseService:
             self.payments_worksheet.append_row(headers)
             logger.info("Created Payments worksheet")
 
-    # ============ CLIENTS ============
+    def _init_clients_worksheet(self):
+        """Initialize Clients worksheet (create if not exists, seed if empty)"""
+        try:
+            self.clients_worksheet = self.sheet.worksheet(CLIENTS_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            self.clients_worksheet = self.sheet.add_worksheet(
+                title=CLIENTS_TAB, rows=200, cols=8
+            )
+            headers = ["ID", "Name", "Address", "Company ID", "Email", "Contact Person", "Phone", "Created At"]
+            self.clients_worksheet.append_row(headers)
+            logger.info("Created Clients worksheet")
+
+        # Seed if empty (only header row)
+        all_data = self.clients_worksheet.get_all_records()
+        if not all_data:
+            now = datetime.now().isoformat()
+            for idx, c in enumerate(SEED_CLIENTS, start=1):
+                row = [idx, c["name"], c["address"], c["company_id"], c["email"], c["contact_person"], c["phone"], now]
+                self.clients_worksheet.append_row(row)
+            logger.info(f"Seeded {len(SEED_CLIENTS)} default clients")
+
+    # ============ CLIENTS (Sheet-based) ============
 
     def get_clients(self) -> List[Dict]:
-        """Get all clients"""
-        return list(DEFAULT_CLIENTS.values())
+        """Get all clients from Clients sheet"""
+        try:
+            all_data = self.clients_worksheet.get_all_records()
+            clients = []
+            for row in all_data:
+                if not row.get("ID"):
+                    continue
+                clients.append({
+                    "id": int(row["ID"]),
+                    "name": row.get("Name", ""),
+                    "address": row.get("Address", ""),
+                    "company_id": row.get("Company ID", ""),
+                    "email": row.get("Email", "") or None,
+                    "contact_person": row.get("Contact Person", ""),
+                    "phone": row.get("Phone", ""),
+                })
+            return clients
+        except Exception as e:
+            logger.error(f"Error fetching clients: {e}")
+            return []
 
     def get_client(self, client_id: int) -> Optional[Dict]:
         """Get client by ID"""
-        return DEFAULT_CLIENTS.get(client_id)
+        clients = self.get_clients()
+        for c in clients:
+            if c["id"] == client_id:
+                return c
+        return None
 
     def get_client_by_name(self, name: str) -> Optional[Dict]:
-        """Get client by name (partial match)"""
-        name_lower = name.lower()
-        for client in DEFAULT_CLIENTS.values():
-            if name_lower in client["name"].lower():
+        """Get client by name (fuzzy match)"""
+        name_lower = name.lower().strip()
+        clients = self.get_clients()
+
+        # Exact match first
+        for client in clients:
+            if client["name"].lower() == name_lower:
                 return client
-        # Try mapping
-        client_id = CLIENT_NAME_TO_ID.get(name.lower())
-        if client_id:
-            return DEFAULT_CLIENTS.get(client_id)
+
+        # Partial match
+        for client in clients:
+            if name_lower in client["name"].lower() or client["name"].lower() in name_lower:
+                return client
+
+        # Single-word shorthand match (e.g., "bauceram" -> "Bauceram GmbH")
+        for client in clients:
+            first_word = client["name"].split()[0].lower() if client["name"] else ""
+            if name_lower == first_word:
+                return client
+
         return None
+
+    def create_client(
+        self,
+        name: str,
+        address: str = "",
+        company_id: str = "",
+        email: str = "",
+        contact_person: str = "",
+        phone: str = ""
+    ) -> Dict:
+        """Add a new client to the Clients sheet"""
+        # Check for duplicates
+        existing = self.get_client_by_name(name)
+        if existing:
+            raise ValueError(f"Client '{existing['name']}' already exists (ID: {existing['id']})")
+
+        # Get next ID
+        clients = self.get_clients()
+        next_id = max((c["id"] for c in clients), default=0) + 1
+
+        now = datetime.now().isoformat()
+        row_data = [next_id, name, address, company_id, email, contact_person, phone, now]
+        self.clients_worksheet.append_row(row_data)
+
+        logger.info(f"Created client '{name}' (ID: {next_id})")
+
+        return {
+            "id": next_id,
+            "name": name,
+            "address": address,
+            "company_id": company_id,
+            "email": email or None,
+            "contact_person": contact_person,
+            "phone": phone,
+        }
 
     # ============ INVOICES ============
 
