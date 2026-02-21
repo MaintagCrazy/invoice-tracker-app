@@ -2,6 +2,7 @@
 Sync endpoints - regenerate PDFs and upload to Google Drive
 """
 import logging
+import traceback
 from fastapi import APIRouter, HTTPException
 
 from services.sheets_database import get_sheets_db
@@ -50,6 +51,42 @@ def drive_status():
     }
 
 
+@router.get("/pdf-test")
+def pdf_test():
+    """Test PDF generation and return diagnostic info"""
+    result = {"weasyprint_available": WEASYPRINT_AVAILABLE}
+
+    if not WEASYPRINT_AVAILABLE:
+        result["error"] = "WeasyPrint not importable"
+        return result
+
+    try:
+        pdf_service = get_pdf_service()
+        test_invoice = {
+            "invoice_number": "TEST/01/2026",
+            "description": "Test invoice",
+            "amount": 100.0,
+            "currency": "EUR",
+            "issue_date": "01.01.2026",
+            "due_date": "31.01.2026"
+        }
+        test_client = {
+            "name": "Test Client",
+            "address": "Test Address",
+            "company_id": "TEST123"
+        }
+        pdf_bytes = pdf_service.generate_pdf_bytes(test_invoice, test_client)
+        result["pdf_generated"] = True
+        result["pdf_size"] = len(pdf_bytes)
+        result["starts_with_pdf"] = pdf_bytes[:5] == b"%PDF-"
+    except Exception as e:
+        result["pdf_generated"] = False
+        result["error"] = str(e)
+        result["traceback"] = traceback.format_exc()
+
+    return result
+
+
 @router.post("/regenerate-all-pdfs")
 def regenerate_all_pdfs():
     """Regenerate PDFs from Sheet data and upload to Drive (for invoices missing Drive ID)"""
@@ -65,7 +102,7 @@ def regenerate_all_pdfs():
     if not drive.is_connected:
         raise HTTPException(
             status_code=503,
-            detail="Google Drive not connected -- check GMAIL_TOKEN_B64 env var"
+            detail="Google Drive not connected -- check DRIVE_TOKEN_B64 env var"
         )
 
     pdf_service = get_pdf_service()
