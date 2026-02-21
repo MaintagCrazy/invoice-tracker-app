@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from services.sheets_database import get_sheets_db
 from services.pdf_service import get_pdf_service, WEASYPRINT_AVAILABLE
-from services.drive_storage import get_drive_service, sanitize_filename
+from services.drive_storage import get_drive_service, drive_filename
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +75,12 @@ def create_invoice(
                 "company_id": client.get('company_id', '')
             }
             pdf_bytes = pdf_service.generate_pdf_bytes(invoice_data, client_data)
-            filename = sanitize_filename(invoice['invoice_number'], client.get('name', ''))
+            filename = drive_filename(invoice['file_number'])
             drive = get_drive_service()
             file_id = drive.upload_pdf(pdf_bytes, filename)
             db.update_invoice_drive_file_id(invoice['file_number'], file_id)
             invoice['drive_file_id'] = file_id
-            logger.info(f"Saved invoice {invoice['invoice_number']} to Drive: {file_id}")
+            logger.info(f"Saved invoice {invoice['invoice_number']} to Drive as {filename}: {file_id}")
     except Exception as e:
         logger.warning(f"Drive upload failed for new invoice (non-critical): {e}")
 
@@ -153,7 +153,7 @@ def download_invoice_pdf(invoice_id: int):
         "company_id": client.get('company_id', '')
     }
 
-    filename = f"Faktura_{invoice['invoice_number'].replace('/', '_')}"
+    filename = drive_filename(invoice['file_number'])
 
     if WEASYPRINT_AVAILABLE:
         try:
@@ -162,14 +162,10 @@ def download_invoice_pdf(invoice_id: int):
             # Lazy backfill: upload to Drive on first download if not already stored
             if not invoice.get('drive_file_id'):
                 try:
-                    drive_filename = sanitize_filename(
-                        invoice['invoice_number'],
-                        client_data.get('name', '')
-                    )
                     drive = get_drive_service()
-                    file_id = drive.upload_pdf(content, drive_filename)
+                    file_id = drive.upload_pdf(content, filename)
                     db.update_invoice_drive_file_id(invoice['file_number'], file_id)
-                    logger.info(f"Lazy backfill: saved invoice {invoice['invoice_number']} to Drive: {file_id}")
+                    logger.info(f"Lazy backfill: saved {filename} to Drive: {file_id}")
                 except Exception as e:
                     logger.warning(f"Lazy Drive upload failed (non-critical): {e}")
 
@@ -177,7 +173,7 @@ def download_invoice_pdf(invoice_id: int):
                 content=content,
                 media_type="application/pdf",
                 headers={
-                    "Content-Disposition": f"attachment; filename={filename}.pdf"
+                    "Content-Disposition": f"attachment; filename={filename}"
                 }
             )
         except Exception:
@@ -185,12 +181,13 @@ def download_invoice_pdf(invoice_id: int):
             # Fall through to HTML fallback
 
     # Fallback: return HTML as downloadable file
+    html_filename = f"Faktura {invoice['file_number']}.html"
     html = pdf_service.generate_html(invoice_data, client_data)
     return Response(
         content=html.encode('utf-8'),
         media_type="text/html",
         headers={
-            "Content-Disposition": f"attachment; filename={filename}.html"
+            "Content-Disposition": f"attachment; filename={html_filename}"
         }
     )
 

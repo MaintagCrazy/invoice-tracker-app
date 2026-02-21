@@ -8,7 +8,6 @@ import base64
 import json
 import io
 import logging
-import re
 from typing import Optional
 
 from config import config
@@ -108,16 +107,11 @@ class DriveStorageService:
         logger.info(f"Uploaded to Drive: {filename} ({file_id}, {len(content)} bytes)")
         return file_id
 
-    def upload_from_local_file(self, path: str, filename: Optional[str] = None) -> str:
-        """Read a local file and upload to Drive. Returns the Drive file ID."""
-        import os
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"File not found: {path}")
-        if not filename:
-            filename = os.path.basename(path)
-        with open(path, 'rb') as f:
-            content = f.read()
-        return self.upload_pdf(content, filename)
+    def delete_file(self, file_id: str):
+        """Delete a file from Drive by ID"""
+        if not self.service:
+            raise RuntimeError("Drive API not connected")
+        self.service.files().delete(fileId=file_id).execute()
 
     def get_file_link(self, file_id: str) -> str:
         """Return Google Drive web view link for a file"""
@@ -171,12 +165,9 @@ class DriveStorageService:
             return False
 
 
-def sanitize_filename(invoice_number: str, client_name: str) -> str:
-    """Generate Drive-friendly filename from invoice data.
-    E.g. Faktura_01_02_2026_Bauceram_GmbH.pdf"""
-    safe_number = invoice_number.replace('/', '_')
-    safe_client = re.sub(r'[^\w\s-]', '', client_name).replace(' ', '_')
-    return f"Faktura_{safe_number}_{safe_client}.pdf"
+def drive_filename(file_number: int) -> str:
+    """Generate Drive filename matching local convention: Faktura {number}.pdf"""
+    return f"Faktura {file_number}.pdf"
 
 
 # Singleton

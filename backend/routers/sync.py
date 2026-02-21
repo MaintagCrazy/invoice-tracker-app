@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from services.sheets_database import get_sheets_db
 from services.pdf_service import get_pdf_service, WEASYPRINT_AVAILABLE
-from services.drive_storage import get_drive_service, sanitize_filename
+from services.drive_storage import get_drive_service, drive_filename
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def delete_drive_orphans():
     for f in files:
         if f["id"] not in linked_file_ids:
             try:
-                drive.service.files().delete(fileId=f["id"]).execute()
+                drive.delete_file(f["id"])
                 deleted.append({"id": f["id"], "name": f["name"]})
                 logger.info(f"Deleted orphan Drive file: {f['name']} ({f['id']})")
             except Exception as e:
@@ -109,6 +109,81 @@ def delete_drive_orphans():
         "error_count": len(errors),
         "deleted": deleted,
         "errors": errors
+    }
+
+
+@router.post("/drive-reset")
+def drive_reset():
+    """Delete ALL Drive files, clear all drive_file_ids, then re-upload everything with correct naming."""
+    if not WEASYPRINT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="WeasyPrint not available")
+
+    drive = get_drive_service()
+    if not drive.is_connected:
+        raise HTTPException(status_code=503, detail="Drive not connected")
+
+    db = get_sheets_db()
+    pdf_service = get_pdf_service()
+
+    # Step 1: Delete ALL files in the Drive folder
+    files = drive.list_files()
+    deleted_count = 0
+    for f in files:
+        try:
+            drive.delete_file(f["id"])
+            deleted_count += 1
+        except Exception as e:
+            logger.error(f"Failed to delete {f['name']}: {e}")
+
+    # Step 2: Clear all drive_file_ids and re-upload
+    invoices = db.get_invoices()
+    uploaded = []
+    errors = []
+
+    for invoice in invoices:
+        try:
+            # Clear existing drive_file_id
+            if invoice.get('drive_file_id'):
+                db.update_invoice_drive_file_id(invoice['file_number'], '')
+
+            invoice_data = {
+                "invoice_number": invoice['invoice_number'],
+                "description": invoice['description'],
+                "amount": invoice['amount'],
+                "currency": invoice['currency'],
+                "issue_date": invoice['issue_date'],
+                "due_date": invoice['due_date']
+            }
+            client = invoice.get('client', {})
+            client_data = {
+                "name": client.get('name', ''),
+                "address": client.get('address', ''),
+                "company_id": client.get('company_id', '')
+            }
+
+            pdf_bytes = pdf_service.generate_pdf_bytes(invoice_data, client_data)
+            filename = drive_filename(invoice['file_number'])
+            file_id = drive.upload_pdf(pdf_bytes, filename)
+            db.update_invoice_drive_file_id(invoice['file_number'], file_id)
+
+            uploaded.append({
+                "file_number": invoice['file_number'],
+                "filename": filename,
+                "drive_file_id": file_id
+            })
+        except Exception as e:
+            errors.append({
+                "file_number": invoice['file_number'],
+                "error": str(e)
+            })
+            logger.error(f"Failed to re-upload invoice {invoice['file_number']}: {e}")
+
+    return {
+        "old_files_deleted": deleted_count,
+        "invoices_uploaded": len(uploaded),
+        "errors": len(errors),
+        "uploaded": uploaded,
+        "error_details": errors
     }
 
 
@@ -197,19 +272,18 @@ def regenerate_all_pdfs():
             }
 
             pdf_bytes = pdf_service.generate_pdf_bytes(invoice_data, client_data)
-            filename = sanitize_filename(invoice['invoice_number'], client.get('name', ''))
+            filename = drive_filename(invoice['file_number'])
 
             file_id = drive.upload_pdf(pdf_bytes, filename)
             db.update_invoice_drive_file_id(invoice['file_number'], file_id)
 
             results["regenerated"].append({
                 "file_number": invoice['file_number'],
-                "invoice_number": invoice['invoice_number'],
                 "drive_filename": filename,
                 "drive_file_id": file_id,
                 "drive_link": drive.get_file_link(file_id)
             })
-            logger.info(f"Regenerated and uploaded invoice {invoice['invoice_number']}")
+            logger.info(f"Regenerated and uploaded {filename}")
 
         except Exception as e:
             results["errors"].append({
