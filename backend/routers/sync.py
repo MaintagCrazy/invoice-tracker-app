@@ -1,6 +1,4 @@
-"""
-Sync endpoints - regenerate PDFs and upload to Google Drive
-"""
+"""Sync endpoints - regenerate PDFs and upload to Google Drive"""
 import logging
 import traceback
 from fastapi import APIRouter, HTTPException
@@ -23,7 +21,6 @@ def drive_status():
     with_drive = [i for i in invoices if i.get('drive_file_id')]
     without_drive = [i for i in invoices if not i.get('drive_file_id')]
 
-    # Try to connect to Drive
     drive_connected = False
     folder_id = None
     folder_link = None
@@ -48,6 +45,70 @@ def drive_status():
         "invoices_without_drive_id": len(without_drive),
         "missing_file_numbers": [i['file_number'] for i in without_drive],
         "weasyprint_available": WEASYPRINT_AVAILABLE
+    }
+
+
+@router.get("/drive-files")
+def list_drive_files():
+    """List all files in the Drive folder with their IDs and names"""
+    drive = get_drive_service()
+    if not drive.is_connected:
+        raise HTTPException(status_code=503, detail="Drive not connected")
+
+    db = get_sheets_db()
+    invoices = db.get_invoices()
+    linked_file_ids = {i.get('drive_file_id') for i in invoices if i.get('drive_file_id')}
+
+    files = drive.list_files()
+    result = []
+    for f in files:
+        result.append({
+            "id": f["id"],
+            "name": f["name"],
+            "linked_to_invoice": f["id"] in linked_file_ids
+        })
+
+    linked = [f for f in result if f["linked_to_invoice"]]
+    orphans = [f for f in result if not f["linked_to_invoice"]]
+
+    return {
+        "total_files": len(result),
+        "linked_to_invoices": len(linked),
+        "orphans": len(orphans),
+        "orphan_files": orphans,
+        "linked_files": linked
+    }
+
+
+@router.delete("/drive-orphans")
+def delete_drive_orphans():
+    """Delete files in Drive folder that are NOT linked to any invoice"""
+    drive = get_drive_service()
+    if not drive.is_connected:
+        raise HTTPException(status_code=503, detail="Drive not connected")
+
+    db = get_sheets_db()
+    invoices = db.get_invoices()
+    linked_file_ids = {i.get('drive_file_id') for i in invoices if i.get('drive_file_id')}
+
+    files = drive.list_files()
+    deleted = []
+    errors = []
+
+    for f in files:
+        if f["id"] not in linked_file_ids:
+            try:
+                drive.service.files().delete(fileId=f["id"]).execute()
+                deleted.append({"id": f["id"], "name": f["name"]})
+                logger.info(f"Deleted orphan Drive file: {f['name']} ({f['id']})")
+            except Exception as e:
+                errors.append({"id": f["id"], "name": f["name"], "error": str(e)})
+
+    return {
+        "deleted_count": len(deleted),
+        "error_count": len(errors),
+        "deleted": deleted,
+        "errors": errors
     }
 
 
