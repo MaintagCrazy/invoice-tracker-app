@@ -3,10 +3,13 @@ PDF generation service using WeasyPrint
 """
 import os
 import io
+import logging
 from datetime import date
 from typing import Optional
 
 from config import config
+
+logger = logging.getLogger(__name__)
 
 # WeasyPrint may not be available locally (system deps)
 try:
@@ -54,7 +57,7 @@ class PDFService:
     <style>
         @page {{ size: A4; margin: 20mm; }}
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 1.4; color: #000; background: white; }}
+        body {{ font-family: 'Liberation Sans', Arial, Helvetica, sans-serif; font-size: 11px; line-height: 1.4; color: #000; background: white; }}
         .faktura-title {{ text-align: center; font-size: 24px; font-weight: bold; margin: 30px 0; letter-spacing: 3px; }}
         .invoice-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
         .invoice-table th {{ background-color: #3366AA; color: white; padding: 12px; text-align: left; font-weight: bold; border: 1px solid #3366AA; }}
@@ -134,9 +137,7 @@ class PDFService:
     def generate_pdf_bytes(self, invoice_data: dict, client_data: dict) -> bytes:
         """Generate PDF as bytes (for in-memory use)"""
         if not WEASYPRINT_AVAILABLE:
-            # Return a simple HTML for preview when WeasyPrint not available
-            html = self.generate_html(invoice_data, client_data)
-            return html.encode('utf-8')
+            raise RuntimeError("WeasyPrint not available — cannot generate PDF")
 
         html = self.generate_html(invoice_data, client_data)
         pdf_bytes = HTML(string=html).write_pdf(font_config=self.font_config)

@@ -1,10 +1,7 @@
 """
-Sync endpoints - backfill local PDFs to Google Drive, regenerate, and status
+Sync endpoints - regenerate PDFs and upload to Google Drive
 """
-import os
-import re
 import logging
-from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from services.sheets_database import get_sheets_db
@@ -14,9 +11,6 @@ from services.drive_storage import get_drive_service, sanitize_filename
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
-
-# Local PDF folder (Mac Desktop)
-LOCAL_PDF_FOLDER = os.path.expanduser("~/Desktop/Faktury Correct")
 
 
 @router.get("/drive-status")
@@ -35,17 +29,13 @@ def drive_status():
     drive_file_count = 0
     try:
         drive = get_drive_service()
-        drive_connected = True
+        drive_connected = drive.is_connected
         folder_id = drive.folder_id
         folder_link = drive.get_folder_link()
-        drive_file_count = drive.get_file_count()
+        if drive_connected:
+            drive_file_count = drive.get_file_count()
     except Exception as e:
         logger.error(f"Drive connection check failed: {e}")
-
-    # Check local folder
-    local_pdfs = []
-    if os.path.isdir(LOCAL_PDF_FOLDER):
-        local_pdfs = [f for f in os.listdir(LOCAL_PDF_FOLDER) if f.endswith('.pdf')]
 
     return {
         "drive_connected": drive_connected,
@@ -56,95 +46,7 @@ def drive_status():
         "invoices_with_drive_id": len(with_drive),
         "invoices_without_drive_id": len(without_drive),
         "missing_file_numbers": [i['file_number'] for i in without_drive],
-        "local_pdf_folder": LOCAL_PDF_FOLDER,
-        "local_pdf_count": len(local_pdfs),
         "weasyprint_available": WEASYPRINT_AVAILABLE
-    }
-
-
-@router.post("/upload-local-invoices")
-def upload_local_invoices():
-    """Scan ~/Desktop/Faktury Correct/, match PDFs to invoices, upload to Drive"""
-    if not os.path.isdir(LOCAL_PDF_FOLDER):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Local folder not found: {LOCAL_PDF_FOLDER}"
-        )
-
-    db = get_sheets_db()
-    drive = get_drive_service()
-    invoices = db.get_invoices()
-
-    # Build lookup: file_number -> invoice
-    invoice_map = {inv['file_number']: inv for inv in invoices}
-
-    # Scan local PDFs
-    pdf_files = sorted([f for f in os.listdir(LOCAL_PDF_FOLDER) if f.endswith('.pdf')])
-
-    results = {
-        "uploaded": [],
-        "skipped_already_has_drive_id": [],
-        "skipped_no_match": [],
-        "errors": []
-    }
-
-    for pdf_name in pdf_files:
-        pdf_path = os.path.join(LOCAL_PDF_FOLDER, pdf_name)
-
-        # Extract file number from "Faktura X.pdf" pattern
-        match = re.match(r'Faktura\s+(\d+)\.pdf', pdf_name, re.IGNORECASE)
-        if not match:
-            results["skipped_no_match"].append(pdf_name)
-            continue
-
-        file_number = int(match.group(1))
-        invoice = invoice_map.get(file_number)
-
-        if not invoice:
-            results["skipped_no_match"].append(pdf_name)
-            continue
-
-        # Skip if already has Drive file ID
-        if invoice.get('drive_file_id'):
-            results["skipped_already_has_drive_id"].append({
-                "file_number": file_number,
-                "filename": pdf_name,
-                "drive_file_id": invoice['drive_file_id']
-            })
-            continue
-
-        # Generate proper filename
-        client_name = invoice.get('client', {}).get('name', '')
-        drive_filename = sanitize_filename(invoice['invoice_number'], client_name)
-
-        try:
-            file_id = drive.upload_from_local_file(pdf_path, drive_filename)
-            db.update_invoice_drive_file_id(file_number, file_id)
-            results["uploaded"].append({
-                "file_number": file_number,
-                "local_file": pdf_name,
-                "drive_filename": drive_filename,
-                "drive_file_id": file_id,
-                "drive_link": drive.get_file_link(file_id)
-            })
-            logger.info(f"Uploaded local PDF {pdf_name} -> {drive_filename} ({file_id})")
-        except Exception as e:
-            results["errors"].append({
-                "file_number": file_number,
-                "filename": pdf_name,
-                "error": str(e)
-            })
-            logger.error(f"Failed to upload {pdf_name}: {e}")
-
-    return {
-        "summary": {
-            "total_local_pdfs": len(pdf_files),
-            "uploaded": len(results["uploaded"]),
-            "skipped_already_stored": len(results["skipped_already_has_drive_id"]),
-            "skipped_no_match": len(results["skipped_no_match"]),
-            "errors": len(results["errors"])
-        },
-        "details": results
     }
 
 
@@ -154,11 +56,18 @@ def regenerate_all_pdfs():
     if not WEASYPRINT_AVAILABLE:
         raise HTTPException(
             status_code=503,
-            detail="WeasyPrint not available — cannot generate PDFs on this server"
+            detail="WeasyPrint not available -- cannot generate PDFs on this server"
         )
 
     db = get_sheets_db()
     drive = get_drive_service()
+
+    if not drive.is_connected:
+        raise HTTPException(
+            status_code=503,
+            detail="Google Drive not connected -- check GMAIL_TOKEN_B64 env var"
+        )
+
     pdf_service = get_pdf_service()
     invoices = db.get_invoices()
 
@@ -199,7 +108,8 @@ def regenerate_all_pdfs():
                 "file_number": invoice['file_number'],
                 "invoice_number": invoice['invoice_number'],
                 "drive_filename": filename,
-                "drive_file_id": file_id
+                "drive_file_id": file_id,
+                "drive_link": drive.get_file_link(file_id)
             })
             logger.info(f"Regenerated and uploaded invoice {invoice['invoice_number']}")
 
