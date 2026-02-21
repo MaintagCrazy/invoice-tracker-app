@@ -15,9 +15,12 @@ class Config:
     # Database
     DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///./invoices.db")
 
-    # Gmail (base64 encoded credentials)
+    # Gmail (base64 encoded credentials) - c.d.consulting.warsaw@gmail.com
     GMAIL_CREDENTIALS_B64: str = os.environ.get("GMAIL_CREDENTIALS_B64", "")
     GMAIL_TOKEN_B64: str = os.environ.get("GMAIL_TOKEN_B64", "")
+
+    # Google Drive (base64 encoded OAuth token) - glamova.hdht@gmail.com
+    DRIVE_TOKEN_B64: str = os.environ.get("DRIVE_TOKEN_B64", "")
 
     # Google Drive (auto-share invoice folder with this account)
     USER_EMAIL: str = os.environ.get("USER_EMAIL", "")
@@ -38,12 +41,12 @@ class Config:
     # Company info (from invoice_editor.py)
     COMPANY = {
         'name': 'C.D. Grupa Budowlana Hung Dat Nguyen',
-        'address': 'Grójecka 214/118',
+        'address': 'Gr\u00f3jecka 214/118',
         'city': '02-390 Warszawa',
         'phone': '0048 792678888',
         'email': 'c.d.consulting.warsaw@gmail.com',
         'nip': '7011092699',
-        'bank': 'Bank Millennium Spółka Akcyjna',
+        'bank': 'Bank Millennium Sp\u00f3\u0142ka Akcyjna',
         'iban': 'PL 88 1160 2202 0000 0005 3052 8886',
         'swift': 'BIGBPLPW'
     }

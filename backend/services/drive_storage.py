@@ -1,8 +1,8 @@
 """
 Google Drive Storage Service
 Uploads invoice PDFs to a shared Google Drive folder via the Drive API.
-Uses OAuth credentials from GMAIL_TOKEN_B64 (same env var as email service,
-now with both gmail.modify and drive scopes).
+Uses OAuth credentials from DRIVE_TOKEN_B64 (glamova.hdht@gmail.com account
+which owns the Drive folder).
 """
 import base64
 import json
@@ -29,7 +29,7 @@ except ImportError:
     build = None
     MediaIoBaseUpload = None
 
-# Target folder in Google Drive (already exists with 39 manually-copied PDFs)
+# Target folder in Google Drive (already exists with manually-copied PDFs)
 DRIVE_FOLDER_ID = "1B4nA6s2nprirBDn5w6-_QUjD1VtyclkA"
 
 
@@ -43,14 +43,14 @@ class DriveStorageService:
         self._authenticate()
 
     def _authenticate(self):
-        """Load OAuth credentials from GMAIL_TOKEN_B64 env var"""
+        """Load OAuth credentials from DRIVE_TOKEN_B64 env var (glamova account)"""
         if not DRIVE_API_AVAILABLE:
-            logger.warning("Google API client not installed — Drive storage disabled")
+            logger.warning("Google API client not installed -- Drive storage disabled")
             return
 
-        token_b64 = config.GMAIL_TOKEN_B64
+        token_b64 = config.DRIVE_TOKEN_B64
         if not token_b64:
-            logger.warning("GMAIL_TOKEN_B64 not set — Drive storage disabled")
+            logger.warning("DRIVE_TOKEN_B64 not set -- Drive storage disabled")
             return
 
         try:
@@ -155,14 +155,6 @@ class DriveStorageService:
 
     def get_file_count(self) -> int:
         """Get count of files in the invoice folder"""
-        if not self.service:
-            return 0
-        resp = self.service.files().list(
-            q=f"'{self.folder_id}' in parents and trashed=false",
-            pageSize=1,
-            fields='files(id)'
-        ).execute()
-        # For accurate count, use list_files; this is a quick check
         return len(self.list_files())
 
     @property
