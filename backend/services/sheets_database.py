@@ -341,7 +341,8 @@ class SheetsDatabaseService:
 
     def get_next_invoice_number(self) -> str:
         """Generate invoice number: XX/MM/YYYY
-        Reads Invoice Number column directly from sheet to avoid missing any rows.
+        Cross-checks with Allegro invoice system to avoid number overlaps
+        (both systems share NIP 7011092699).
         """
         now = datetime.now()
         month_suffix = f"/{now.month:02d}/{now.year}"
@@ -365,6 +366,23 @@ class SheetsDatabaseService:
                     pass
 
         next_seq = max(seq_numbers, default=0) + 1
+
+        # Cross-system check: Allegro Glamova invoices share NIP 7011092699
+        try:
+            import httpx
+            resp = httpx.get(
+                'https://marbily-backend-production.up.railway.app/allegro/invoices/max-sequence',
+                params={'month': now.month, 'year': now.year, 'nip': '7011092699'},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                allegro_max = resp.json().get('max_sequence', 0)
+                if allegro_max >= next_seq:
+                    next_seq = allegro_max + 1
+                    logger.info(f"Cross-system sequence: Allegro max={allegro_max}, using seq={next_seq}")
+        except Exception as e:
+            logger.warning(f"Cross-system invoice sequence check failed (proceeding with local): {e}")
+
         return f"{next_seq:02d}/{now.month:02d}/{now.year}"
 
     def create_invoice(

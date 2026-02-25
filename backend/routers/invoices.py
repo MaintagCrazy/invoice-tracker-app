@@ -29,6 +29,39 @@ def get_dashboard_stats():
     return db.get_stats()
 
 
+@router.get("/max-sequence")
+def get_max_invoice_sequence(month: int = None, year: int = None):
+    """Get max invoice sequence for cross-system numbering.
+    Used by Allegro invoice system to avoid number overlaps."""
+    from datetime import datetime
+    now = datetime.now()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+
+    db = get_sheets_db()
+    month_suffix = f"/{month:02d}/{year}"
+
+    invoices = db.get_invoices()
+    seq_numbers = []
+    for inv in invoices:
+        inv_num = inv.get('invoice_number', '')
+        if inv_num.endswith(month_suffix):
+            try:
+                seq = int(inv_num.split('/')[0])
+                seq_numbers.append(seq)
+            except (ValueError, IndexError):
+                pass
+
+    return {
+        "month": month,
+        "year": year,
+        "max_sequence": max(seq_numbers, default=0),
+        "count": len(seq_numbers)
+    }
+
+
 @router.post("/")
 def create_invoice(
     client_id: int,
