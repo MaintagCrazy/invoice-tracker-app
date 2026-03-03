@@ -61,7 +61,13 @@ app.include_router(chat_router)
 app.include_router(email_router)
 app.include_router(payments_router)
 app.include_router(sync_router)
-app.include_router(efb223_router)
+
+# EFB 223 router - only include if deps are available
+if efb223_router is not None:
+    app.include_router(efb223_router)
+    logger.info("EFB 223 Generator module loaded")
+else:
+    logger.warning("EFB 223 Generator not available (missing dependencies: anthropic, openpyxl, fpdf2, pikepdf)")
 
 # Serve static files (frontend)
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
