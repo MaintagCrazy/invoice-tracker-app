@@ -2,323 +2,244 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EFB 223 Generator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>EFB 223 Generator - Invoice Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        [data-lang-de] { display: block; }
+        [data-lang-de] { display: inline; }
         [data-lang-en] { display: none; }
         html[lang="en"] [data-lang-de] { display: none; }
-        html[lang="en"] [data-lang-en] { display: block; }
+        html[lang="en"] [data-lang-en] { display: inline; }
+
+        @media (max-width: 767px) {
+            .desktop-only { display: none !important; }
+            body { padding-bottom: 80px; }
+        }
+        @media (min-width: 768px) {
+            .mobile-only { display: none !important; }
+        }
 
         .floating-nav {
             position: fixed;
-            bottom: 24px;
+            bottom: 16px;
             left: 50%;
             transform: translateX(-50%);
-            background: white;
-            border-radius: 9999px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
-            padding: 12px 20px;
+            background: #1f2937;
+            border-radius: 50px;
+            padding: 6px 8px;
             display: flex;
-            gap: 8px;
+            align-items: center;
+            gap: 4px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
             z-index: 40;
         }
-
-        .floating-nav a, .floating-nav button {
-            padding: 8px 12px;
-            border-radius: 9999px;
-            font-size: 12px;
+        .floating-nav a {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            color: #9ca3af;
+            transition: all 0.2s;
             text-decoration: none;
-            color: #64748b;
-            transition: all 0.3s;
-            border: none;
-            background: transparent;
-            cursor: pointer;
         }
-
-        .floating-nav a:hover, .floating-nav button:hover {
-            background: #f1f5f9;
-            color: #1e293b;
-        }
-
+        .floating-nav a:active { transform: scale(0.92); }
         .floating-nav a.active {
-            background: #0f172a;
+            background: #3b82f6;
             color: white;
+            box-shadow: 0 2px 8px rgba(59,130,246,0.4);
         }
-
-        @media (max-width: 768px) {
-            .desktop-nav { display: none; }
-            .floating-nav { display: flex; }
-        }
-
-        @media (min-width: 769px) {
-            .desktop-nav { display: flex; }
-            .floating-nav { display: none; }
-        }
+        .floating-nav a i { font-size: 18px; }
 
         .spinner {
-            border: 3px solid #e2e8f0;
-            border-top: 3px solid #0f172a;
+            border: 3px solid #e5e7eb;
+            border-top: 3px solid #3b82f6;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
+            width: 36px;
+            height: 36px;
             animation: spin 0.8s linear infinite;
         }
-
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
-        .upload-area {
-            border: 2px dashed #cbd5e1;
-            border-radius: 8px;
-            padding: 24px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .upload-area:hover {
-            border-color: #0f172a;
-            background: #f8fafc;
-        }
-
-        .upload-area.dragging {
-            border-color: #0f172a;
-            background: #f0f4f8;
-        }
-
-        .file-input-label {
-            display: inline-block;
-            padding: 8px 16px;
-            background: #0f172a;
-            color: white;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.3s;
-        }
-
-        .file-input-label:hover {
-            background: #1e293b;
-        }
-
-        .file-input-label input {
-            display: none;
-        }
     </style>
 </head>
-<body class="bg-slate-50">
-    <!-- Desktop Navigation -->
-    <nav class="desktop-nav fixed top-0 left-0 right-0 bg-white border-b border-slate-200 z-50">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-            <div class="flex items-center gap-8">
-                <div class="flex items-center gap-2">
-                    <i class="fas fa-file-invoice text-slate-900 text-xl"></i>
-                    <span class="font-bold text-slate-900">Invoice Tracker</span>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Desktop Navigation (same as index.html) -->
+    <nav class="bg-white shadow-sm border-b desktop-only">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <i class="fas fa-file-invoice-dollar text-blue-600 text-2xl mr-3"></i>
+                    <span class="text-xl font-semibold text-gray-900">Invoice Tracker</span>
                 </div>
-                <div class="flex gap-6">
-                    <a href="/" class="text-slate-600 hover:text-slate-900 transition">
-                        <i class="fas fa-home"></i> <span data-lang-de>Dashboard</span><span data-lang-en>Dashboard</span>
-                    </a>
-                    <a href="/chat" class="text-slate-600 hover:text-slate-900 transition">
-                        <i class="fas fa-plus"></i> <span data-lang-de>Neue Rechnung</span><span data-lang-en>New Invoice</span>
-                    </a>
-                    <a href="#" class="text-slate-600 hover:text-slate-900 transition">
-                        <i class="fas fa-google"></i> <span data-lang-de>Google Drive</span><span data-lang-en>Google Drive</span>
-                    </a>
-                    <a href="/efb223" class="text-slate-900 font-semibold transition border-b-2 border-slate-900">
-                        <i class="fas fa-file-pdf"></i> <span data-lang-de>EFB 223 Generator</span><span data-lang-en>EFB 223 Generator</span>
-                    </a>
+                <div class="flex items-center space-x-4">
+                    <a href="/" class="text-gray-600 hover:text-blue-600">Dashboard</a>
+                    <a href="/chat" class="text-gray-600 hover:text-blue-600">+ New Invoice</a>
+                    <a href="/" class="text-gray-600 hover:text-blue-600"><i class="fab fa-google-drive mr-1"></i>Google Drive</a>
+                    <a href="/efb223" class="text-blue-600 font-medium"><i class="fas fa-file-pdf mr-1"></i>EFB 223</a>
+                    <button id="langToggle" onclick="toggleLanguage()" class="ml-2 text-gray-500 hover:text-blue-600 text-sm font-medium border border-gray-300 rounded px-2 py-1">
+                        <span data-lang-de>EN</span><span data-lang-en>DE</span>
+                    </button>
                 </div>
             </div>
-            <button id="langToggle" class="text-slate-600 hover:text-slate-900 transition font-semibold text-sm">
-                <span data-lang-de>EN</span><span data-lang-en>DE</span>
-            </button>
         </div>
     </nav>
 
+    <!-- Mobile Header (same style as index.html) -->
+    <div class="mobile-only bg-white border-b px-4 py-3">
+        <div class="flex justify-between items-center">
+            <span class="text-lg font-semibold text-gray-900">EFB 223 Generator</span>
+            <button onclick="toggleLanguage()" class="text-gray-500 text-sm font-medium border border-gray-300 rounded px-2 py-1">
+                <span data-lang-de>EN</span><span data-lang-en>DE</span>
+            </button>
+        </div>
+    </div>
+
     <!-- Main Content -->
-    <main class="pt-20 pb-32 md:pb-8 px-4">
-        <div class="max-w-3xl mx-auto">
-            <!-- Header -->
-            <div class="mb-8">
-                <h1 class="text-4xl font-bold text-slate-900 mb-2">
-                    <span data-lang-de>EFB 223 Generator</span>
-                    <span data-lang-en>EFB 223 Generator</span>
-                </h1>
-                <p class="text-slate-600">
-                    <span data-lang-de>Laden Sie EFB 223 und LV Dokumente hoch, um Excel-, PDF- und Formblatt 221-Dateien zu generieren.</span>
-                    <span data-lang-en>Upload EFB 223 and LV documents to generate Excel, PDF, and Formblatt 221 files.</span>
-                </p>
-            </div>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
+        <!-- Page Title -->
+        <div class="mb-6">
+            <h1 class="text-2xl font-semibold text-gray-900">
+                <span data-lang-de>EFB 223 Generator</span>
+                <span data-lang-en>EFB 223 Generator</span>
+            </h1>
+            <p class="text-sm text-gray-500 mt-1">
+                <span data-lang-de>EFB 223 und LV Dokumente hochladen, um Excel-, PDF- und Formblatt 221-Dateien zu generieren.</span>
+                <span data-lang-en>Upload EFB 223 and LV documents to generate Excel, PDF, and Formblatt 221 files.</span>
+            </p>
+        </div>
 
-            <!-- Form Card -->
-            <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-8">
-                <form id="efb223Form" enctype="multipart/form-data">
-                    <!-- EFB 223 PDF Upload -->
-                    <div class="mb-6">
-                        <label class="block text-sm font-semibold text-slate-900 mb-2">
-                            <i class="fas fa-file-pdf text-red-600"></i>
-                            <span data-lang-de>EFB 223 Template PDF</span>
-                            <span data-lang-en>EFB 223 Template PDF</span>
-                            <span class="text-red-600">*</span>
-                        </label>
-                        <label class="file-input-label">
-                            <span data-lang-de>Datei ausw\u00e4hlen</span>
-                            <span data-lang-en>Choose File</span>
-                            <input type="file" name="efb_pdf" accept=".pdf" required>
-                        </label>
-                        <div id="efb_pdf_name" class="text-slate-600 text-sm mt-2"></div>
-                        <p class="text-slate-500 text-xs mt-2">
-                            <span data-lang-de>PDF-Datei der EFB 223 Vorlage erforderlich</span>
-                            <span data-lang-en>EFB 223 template PDF file required</span>
-                        </p>
+        <!-- Form Card (matches dashboard card style) -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <form id="efb223Form" enctype="multipart/form-data">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Left Column: File Uploads -->
+                    <div class="space-y-5">
+                        <!-- EFB 223 PDF -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                <span data-lang-de>EFB 223 Template PDF</span>
+                                <span data-lang-en>EFB 223 Template PDF</span>
+                                <span class="text-red-500">*</span>
+                            </label>
+                            <input type="file" name="efb_pdf" accept=".pdf" required class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-gray-300 rounded px-3 py-2">
+                        </div>
+
+                        <!-- LV PDF -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                <span data-lang-de>LV Dokument PDF</span>
+                                <span data-lang-en>LV Document PDF</span>
+                                <span class="text-red-500">*</span>
+                            </label>
+                            <input type="file" name="lv_pdf" accept=".pdf" required class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-gray-300 rounded px-3 py-2">
+                        </div>
+
+                        <!-- Formblatt 221 PDF (Optional) -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                <span data-lang-de>Formblatt 221 Template PDF</span>
+                                <span data-lang-en>Formblatt 221 Template PDF</span>
+                                <span class="text-gray-400 text-xs">(optional)</span>
+                            </label>
+                            <input type="file" name="form221_pdf" accept=".pdf" class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-gray-50 file:text-gray-700 hover:file:bg-gray-100 border border-gray-300 rounded px-3 py-2">
+                        </div>
                     </div>
 
-                    <!-- LV PDF Upload -->
-                    <div class="mb-6">
-                        <label class="block text-sm font-semibold text-slate-900 mb-2">
-                            <i class="fas fa-file-pdf text-red-600"></i>
-                            <span data-lang-de>LV Dokument PDF</span>
-                            <span data-lang-en>LV Document PDF</span>
-                            <span class="text-red-600">*</span>
-                        </label>
-                        <label class="file-input-label">
-                            <span data-lang-de>Datei ausw\u00e4hlen</span>
-                            <span data-lang-en>Choose File</span>
-                            <input type="file" name="lv_pdf" accept=".pdf" required>
-                        </label>
-                        <div id="lv_pdf_name" class="text-slate-600 text-sm mt-2"></div>
-                        <p class="text-slate-500 text-xs mt-2">
-                            <span data-lang-de>LV (Leistungsverzeichnis) PDF-Datei erforderlich</span>
-                            <span data-lang-en>LV (Performance List) PDF file required</span>
-                        </p>
-                    </div>
+                    <!-- Right Column: Settings -->
+                    <div class="space-y-5">
+                        <!-- Bieter -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                <span data-lang-de>Bieter (Unternehmen)</span>
+                                <span data-lang-en>Bidder (Company)</span>
+                            </label>
+                            <input type="text" name="bieter" value="Bauceram GmbH" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
 
-                    <!-- Formblatt 221 PDF Upload (Optional) -->
-                    <div class="mb-6">
-                        <label class="block text-sm font-semibold text-slate-900 mb-2">
-                            <i class="fas fa-file-pdf text-slate-400"></i>
-                            <span data-lang-de>Formblatt 221 Template PDF</span>
-                            <span data-lang-en>Formblatt 221 Template PDF</span>
-                            <span class="text-slate-400">(optional)</span>
-                        </label>
-                        <label class="file-input-label">
-                            <span data-lang-de>Datei ausw\u00e4hlen</span>
-                            <span data-lang-en>Choose File</span>
-                            <input type="file" name="form221_pdf" accept=".pdf">
-                        </label>
-                        <div id="form221_pdf_name" class="text-slate-600 text-sm mt-2"></div>
-                        <p class="text-slate-500 text-xs mt-2">
-                            <span data-lang-de>Optional: Formblatt 221 Vorlage mit AcroForm-Feldern</span>
-                            <span data-lang-en>Optional: Formblatt 221 template with AcroForm fields</span>
-                        </p>
-                    </div>
+                        <!-- Nachlass -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                <span data-lang-de>Nachlass (%)</span>
+                                <span data-lang-en>Discount (%)</span>
+                            </label>
+                            <input type="number" name="nachlass" value="0" step="0.1" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <p class="text-xs text-gray-400 mt-1">
+                                <span data-lang-de>z.B. -15 f\u00fcr 15% Nachlass</span>
+                                <span data-lang-en>e.g. -15 for 15% discount</span>
+                            </p>
+                        </div>
 
-                    <!-- Bieter Input -->
-                    <div class="mb-6">
-                        <label class="block text-sm font-semibold text-slate-900 mb-2">
-                            <i class="fas fa-user"></i>
-                            <span data-lang-de>Bieter (Unternehmen)</span>
-                            <span data-lang-en>Bieter (Company)</span>
-                        </label>
-                        <input type="text" name="bieter" value="Bauceram GmbH" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/20">
-                        <p class="text-slate-500 text-xs mt-2">
-                            <span data-lang-de>Name des Unternehmens/Bieters</span>
-                            <span data-lang-en>Company/bidder name</span>
-                        </p>
+                        <!-- Password (visible text, not hidden) -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                <span data-lang-de>Urkalkulation Passwort</span>
+                                <span data-lang-en>Urkalkulation Password</span>
+                            </label>
+                            <input type="text" name="password" value="Bauceram2026" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
                     </div>
+                </div>
 
-                    <!-- Nachlass % Input -->
-                    <div class="mb-6">
-                        <label class="block text-sm font-semibold text-slate-900 mb-2">
-                            <i class="fas fa-percent"></i>
-                            <span data-lang-de>Nachlass (%)</span>
-                            <span data-lang-en>Discount (%)</span>
-                        </label>
-                        <input type="number" name="nachlass" value="0" step="0.1" min="0" max="100" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/20">
-                        <p class="text-slate-500 text-xs mt-2">
-                            <span data-lang-de>Nachlassprozentsatz (0 f\u00fcr keinen Nachlass)</span>
-                            <span data-lang-en>Discount percentage (0 for no discount)</span>
-                        </p>
-                    </div>
-
-                    <!-- Urkalkulation Password Input -->
-                    <div class="mb-8">
-                        <label class="block text-sm font-semibold text-slate-900 mb-2">
-                            <i class="fas fa-lock"></i>
-                            <span data-lang-de>Urkalkulation Passwort</span>
-                            <span data-lang-en>Urkalkulation Password</span>
-                        </label>
-                        <input type="password" name="password" value="Bauceram2026" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/20">
-                        <p class="text-slate-500 text-xs mt-2">
-                            <span data-lang-de>Passwort f\u00fcr Urkalkulation PDF</span>
-                            <span data-lang-en>Password for Urkalkulation PDF</span>
-                        </p>
-                    </div>
-
-                    <!-- Submit Button -->
-                    <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2">
-                        <i class="fas fa-download"></i>
+                <!-- Submit Button -->
+                <div class="mt-6 flex justify-end">
+                    <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium text-sm">
+                        <i class="fas fa-download mr-2"></i>
                         <span data-lang-de>EFB 223 Dateien generieren</span>
                         <span data-lang-en>Generate EFB 223 Files</span>
                     </button>
-                </form>
+                </div>
+            </form>
 
-                <!-- Status Area -->
-                <div id="statusArea" class="mt-8 hidden">
-                    <div id="loadingStatus" class="text-center hidden">
-                        <div class="spinner mx-auto mb-4"></div>
-                        <p class="text-slate-600 font-medium">
-                            <span data-lang-de>Dateien werden generiert...</span>
-                            <span data-lang-en>Generating files...</span>
-                        </p>
-                    </div>
-                    <div id="successStatus" class="text-center hidden">
-                        <div class="text-4xl text-green-600 mb-2">&#10003;</div>
-                        <p class="text-slate-900 font-semibold">
-                            <span data-lang-de>Erfolgreich generiert!</span>
-                            <span data-lang-en>Successfully generated!</span>
-                        </p>
-                        <p class="text-slate-600 text-sm mt-2">
-                            <span data-lang-de>Die Dateien werden heruntergeladen...</span>
-                            <span data-lang-en>Files are downloading...</span>
-                        </p>
-                    </div>
-                    <div id="errorStatus" class="text-center hidden">
-                        <div class="text-4xl text-red-600 mb-2">&#10005;</div>
-                        <p class="text-slate-900 font-semibold" id="errorMessage"></p>
-                    </div>
+            <!-- Status Area -->
+            <div id="statusArea" class="mt-6 hidden">
+                <div id="loadingStatus" class="text-center py-6 hidden">
+                    <div class="spinner mx-auto mb-3"></div>
+                    <p class="text-gray-600 text-sm">
+                        <span data-lang-de>Dateien werden generiert... Dies kann 1-2 Minuten dauern.</span>
+                        <span data-lang-en>Generating files... This may take 1-2 minutes.</span>
+                    </p>
+                </div>
+                <div id="successStatus" class="text-center py-6 hidden">
+                    <i class="fas fa-check-circle text-green-500 text-3xl mb-2"></i>
+                    <p class="text-gray-900 font-medium">
+                        <span data-lang-de>Erfolgreich generiert!</span>
+                        <span data-lang-en>Successfully generated!</span>
+                    </p>
+                    <p class="text-gray-500 text-sm mt-1">
+                        <span data-lang-de>Die Dateien werden heruntergeladen...</span>
+                        <span data-lang-en>Files are downloading...</span>
+                    </p>
+                </div>
+                <div id="errorStatus" class="text-center py-6 hidden">
+                    <i class="fas fa-exclamation-circle text-red-500 text-3xl mb-2"></i>
+                    <p class="text-gray-900 font-medium" id="errorMessage"></p>
                 </div>
             </div>
         </div>
     </main>
 
-    <!-- Floating Navigation (Mobile) -->
-    <nav class="floating-nav">
+    <!-- Mobile: Floating Pill Nav (same as index.html) -->
+    <div class="floating-nav mobile-only">
         <a href="/">
-            <i class="fas fa-home"></i>
+            <i class="fas fa-file-invoice"></i>
         </a>
         <a href="/chat">
             <i class="fas fa-plus"></i>
         </a>
-        <a href="#">
-            <i class="fas fa-google"></i>
+        <a href="/">
+            <i class="fab fa-google-drive"></i>
         </a>
         <a href="/efb223" class="active">
             <i class="fas fa-file-pdf"></i>
         </a>
-        <button id="langToggleMobile" title="Toggle Language">
-            <i class="fas fa-globe"></i>
-        </button>
-    </nav>
+    </div>
 
     <script>
-        // Language toggle functionality
         function toggleLanguage() {
             const html = document.documentElement;
             const currentLang = html.getAttribute('lang') || 'de';
@@ -327,28 +248,9 @@
             localStorage.setItem('efb223Lang', newLang);
         }
 
-        // Initialize language from localStorage
         const savedLang = localStorage.getItem('efb223Lang') || 'de';
         document.documentElement.setAttribute('lang', savedLang);
 
-        // Attach language toggle listeners
-        document.getElementById('langToggle').addEventListener('click', toggleLanguage);
-        document.getElementById('langToggleMobile').addEventListener('click', toggleLanguage);
-
-        // File input label updates
-        ['efb_pdf', 'lv_pdf', 'form221_pdf'].forEach(fieldName => {
-            const input = document.querySelector(`input[name="${fieldName}"]`);
-            const label = document.getElementById(`${fieldName}_name`);
-            if (input) {
-                input.addEventListener('change', (e) => {
-                    if (e.target.files && e.target.files[0]) {
-                        label.textContent = e.target.files[0].name;
-                    }
-                });
-            }
-        });
-
-        // Form submission
         document.getElementById('efb223Form').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -358,7 +260,6 @@
             const errorStatus = document.getElementById('errorStatus');
             const errorMessage = document.getElementById('errorMessage');
 
-            // Reset status displays
             statusArea.classList.remove('hidden');
             loadingStatus.classList.remove('hidden');
             successStatus.classList.add('hidden');
@@ -376,30 +277,24 @@
                     throw new Error(error.detail || 'Generation failed');
                 }
 
-                // Handle ZIP download
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'efb223_output.zip';
+                const cd = response.headers.get('Content-Disposition');
+                const match = cd && cd.match(/filename="(.+)"/);
+                a.download = match ? match[1] : 'efb223_output.zip';
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
 
-                // Show success
                 loadingStatus.classList.add('hidden');
                 successStatus.classList.remove('hidden');
 
-                // Reset form
                 setTimeout(() => {
-                    document.getElementById('efb223Form').reset();
                     statusArea.classList.add('hidden');
-                    ['efb_pdf', 'lv_pdf', 'form221_pdf'].forEach(fieldName => {
-                        const label = document.getElementById(`${fieldName}_name`);
-                        if (label) label.textContent = '';
-                    });
-                }, 3000);
+                }, 4000);
 
             } catch (error) {
                 console.error('Error:', error);
