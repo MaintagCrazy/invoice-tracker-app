@@ -55,7 +55,7 @@
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
             z-index: 40;
         }
-        .floating-nav button {
+        .floating-nav button, .floating-nav a.nav-btn {
             display: flex;
             align-items: center;
             justify-content: center;
@@ -66,14 +66,15 @@
             transition: all 0.2s;
             border: none;
             background: none;
+            text-decoration: none;
         }
-        .floating-nav button:active { transform: scale(0.92); }
-        .floating-nav button.active {
+        .floating-nav button:active, .floating-nav a.nav-btn:active { transform: scale(0.92); }
+        .floating-nav button.active, .floating-nav a.nav-btn.active {
             background: #3b82f6;
             color: white;
             box-shadow: 0 2px 8px rgba(59,130,246,0.4);
         }
-        .floating-nav button i { font-size: 18px; }
+        .floating-nav button i, .floating-nav a.nav-btn i { font-size: 18px; }
 
         /* Mobile card */
         .invoice-card {
@@ -102,6 +103,7 @@
                     <a href="/" class="text-blue-600 font-medium">Dashboard</a>
                     <a href="/chat" class="text-gray-600 hover:text-blue-600">+ New Invoice</a>
                     <a href="#" onclick="showDriveView(); return false;" class="text-gray-600 hover:text-blue-600"><i class="fab fa-google-drive mr-1"></i>Google Drive</a>
+                    <a href="/efb223" class="text-gray-600 hover:text-blue-600"><i class="fas fa-file-pdf mr-1"></i>EFB 223</a>
                 </div>
             </div>
         </div>
@@ -335,6 +337,9 @@
         <button id="mnav-drive" onclick="mobileNav('drive')">
             <i class="fab fa-google-drive"></i>
         </button>
+        <a href="/efb223" class="nav-btn" title="EFB 223">
+            <i class="fas fa-file-pdf"></i>
+        </a>
         <button id="mnav-add" onclick="toggleActionMenu()">
             <i class="fas fa-plus" id="mnav-add-icon"></i>
         </button>
