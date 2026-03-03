@@ -126,31 +126,53 @@ async def health_check():
     """Health check endpoint"""
     # Test sheets connection
     sheets_ok = False
+    sheets_error = None
     try:
         from services.sheets_database import get_sheets_db
         db = get_sheets_db()
         db.get_clients()  # Quick test
         sheets_ok = True
     except Exception as e:
+        sheets_error = str(e)
         logger.error(f"Sheets connection error: {e}")
 
     # Test Drive folder access
     drive_ok = False
+    drive_error = None
     try:
         from services.drive_storage import get_drive_service
         drive = get_drive_service()
         drive_ok = drive.is_connected
     except Exception as e:
+        drive_error = str(e)
         logger.error(f"Drive folder error: {e}")
 
-    return {
+    # Check env vars presence (not values)
+    env_check = {
+        "GOOGLE_SERVICE_ACCOUNT_B64": bool(os.environ.get("GOOGLE_SERVICE_ACCOUNT_B64")),
+        "OPENROUTER_API_KEY": bool(os.environ.get("OPENROUTER_API_KEY")),
+        "GMAIL_TOKEN_B64": bool(os.environ.get("GMAIL_TOKEN_B64")),
+        "GMAIL_CREDENTIALS_B64": bool(os.environ.get("GMAIL_CREDENTIALS_B64")),
+        "DRIVE_TOKEN_B64": bool(os.environ.get("DRIVE_TOKEN_B64")),
+        "ANTHROPIC_API_KEY": bool(os.environ.get("ANTHROPIC_API_KEY")),
+    }
+
+    result = {
         "status": "healthy" if sheets_ok else "degraded",
         "database": "google_sheets",
         "sheets_connected": sheets_ok,
         "drive_connected": drive_ok,
         "ai_configured": bool(config.OPENROUTER_API_KEY),
-        "email_configured": bool(config.GMAIL_TOKEN_B64)
+        "email_configured": bool(config.GMAIL_TOKEN_B64),
+        "env_vars": env_check,
     }
+
+    if sheets_error:
+        result["sheets_error"] = sheets_error
+    if drive_error:
+        result["drive_error"] = drive_error
+
+    return result
 
 
 if __name__ == "__main__":
