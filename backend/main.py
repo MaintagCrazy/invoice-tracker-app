@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
-from routers import invoices_router, clients_router, chat_router, email_router, payments_router, sync_router
+from routers import invoices_router, clients_router, chat_router, email_router, payments_router, sync_router, efb223_router
 from config import config
 
 # Configure logging
@@ -61,6 +61,7 @@ app.include_router(chat_router)
 app.include_router(email_router)
 app.include_router(payments_router)
 app.include_router(sync_router)
+app.include_router(efb223_router)
 
 # Serve static files (frontend)
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
@@ -103,6 +104,15 @@ async def client_page():
     if os.path.exists(client_path):
         return FileResponse(client_path)
     return {"error": "Client page not found"}
+
+
+@app.get("/efb223")
+async def efb223_page():
+    """Serve EFB 223 Generator page"""
+    efb_path = os.path.join(frontend_path, "efb223.html")
+    if os.path.exists(efb_path):
+        return FileResponse(efb_path)
+    return {"error": "EFB 223 page not found"}
 
 
 @app.get("/health")
