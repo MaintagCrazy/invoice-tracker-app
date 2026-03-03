@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -13,6 +13,12 @@
     <meta name="theme-color" content="#f9fafb">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png">
     <style>
+        /* Language toggle */
+        [data-lang-de] { display: inline; }
+        [data-lang-en] { display: none; }
+        html[lang="en"] [data-lang-de] { display: none; }
+        html[lang="en"] [data-lang-en] { display: inline; }
+
         .client-item { transition: all 0.15s ease; }
         .client-item:hover { background-color: #f0f9ff; }
         .client-item.active { background-color: #eff6ff; border-color: #3b82f6; }
@@ -100,10 +106,13 @@
                     <span class="text-xl font-semibold text-gray-900">Invoice Tracker</span>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <a href="/" class="text-blue-600 font-medium">Dashboard</a>
-                    <a href="/chat" class="text-gray-600 hover:text-blue-600">+ New Invoice</a>
+                    <a href="/" class="text-blue-600 font-medium"><span data-lang-de>Dashboard</span><span data-lang-en>Dashboard</span></a>
+                    <a href="/chat" class="text-gray-600 hover:text-blue-600"><span data-lang-de>+ Neue Rechnung</span><span data-lang-en>+ New Invoice</span></a>
                     <a href="#" onclick="showDriveView(); return false;" class="text-gray-600 hover:text-blue-600"><i class="fab fa-google-drive mr-1"></i>Google Drive</a>
                     <a href="/efb223" class="text-gray-600 hover:text-blue-600"><i class="fas fa-file-pdf mr-1"></i>EFB 223</a>
+                    <button onclick="toggleLanguage()" class="ml-2 text-gray-500 hover:text-blue-600 text-sm font-medium border border-gray-300 rounded px-2 py-1">
+                        <span data-lang-de>EN</span><span data-lang-en>DE</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -112,15 +121,18 @@
     <!-- Mobile Header -->
     <div class="mobile-only bg-white border-b px-4 py-3">
         <div class="flex justify-between items-center">
-            <span class="text-lg font-semibold text-gray-900">Invoices</span>
+            <span class="text-lg font-semibold text-gray-900"><span data-lang-de>Rechnungen</span><span data-lang-en>Invoices</span></span>
             <div class="flex items-center space-x-2">
                 <span id="mobile-outstanding" class="text-sm font-bold text-red-600"></span>
+                <button onclick="toggleLanguage()" class="text-gray-500 text-sm font-medium border border-gray-300 rounded px-2 py-1">
+                    <span data-lang-de>EN</span><span data-lang-en>DE</span>
+                </button>
             </div>
         </div>
         <!-- Mobile client filter indicator -->
         <div id="mobile-filter-bar" class="hidden mt-2 flex items-center justify-between bg-blue-50 rounded-lg px-3 py-2">
             <span class="text-sm text-blue-700"><i class="fas fa-filter mr-1"></i> <span id="mobile-filter-name"></span></span>
-            <button onclick="clearClientFilter()" class="text-blue-600 text-sm font-medium">Clear</button>
+            <button onclick="clearClientFilter()" class="text-blue-600 text-sm font-medium"><span data-lang-de>Löschen</span><span data-lang-en>Clear</span></button>
         </div>
     </div>
 
@@ -132,7 +144,7 @@
                 <div class="flex items-center">
                     <div class="p-2 rounded-full bg-blue-100"><i class="fas fa-file-invoice text-blue-600 text-sm"></i></div>
                     <div class="ml-3">
-                        <p class="text-xs text-gray-500">Total</p>
+                        <p class="text-xs text-gray-500"><span data-lang-de>Gesamt</span><span data-lang-en>Total</span></p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-total">0</p>
                     </div>
                 </div>
@@ -141,7 +153,7 @@
                 <div class="flex items-center">
                     <div class="p-2 rounded-full bg-yellow-100"><i class="fas fa-edit text-yellow-600 text-sm"></i></div>
                     <div class="ml-3">
-                        <p class="text-xs text-gray-500">Drafts</p>
+                        <p class="text-xs text-gray-500"><span data-lang-de>Entwürfe</span><span data-lang-en>Drafts</span></p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-draft">0</p>
                     </div>
                 </div>
@@ -150,7 +162,7 @@
                 <div class="flex items-center">
                     <div class="p-2 rounded-full bg-blue-100"><i class="fas fa-paper-plane text-blue-600 text-sm"></i></div>
                     <div class="ml-3">
-                        <p class="text-xs text-gray-500">Sent</p>
+                        <p class="text-xs text-gray-500"><span data-lang-de>Gesendet</span><span data-lang-en>Sent</span></p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-sent">0</p>
                     </div>
                 </div>
@@ -159,7 +171,7 @@
                 <div class="flex items-center">
                     <div class="p-2 rounded-full bg-green-100"><i class="fas fa-check-circle text-green-600 text-sm"></i></div>
                     <div class="ml-3">
-                        <p class="text-xs text-gray-500">Paid</p>
+                        <p class="text-xs text-gray-500"><span data-lang-de>Bezahlt</span><span data-lang-en>Paid</span></p>
                         <p class="text-xl font-semibold text-gray-900" id="stat-paid">0</p>
                     </div>
                 </div>
@@ -168,7 +180,7 @@
                 <div class="flex items-center">
                     <div class="p-2 rounded-full bg-red-100"><i class="fas fa-exclamation-circle text-red-600 text-sm"></i></div>
                     <div class="ml-3">
-                        <p class="text-xs text-gray-500">Due</p>
+                        <p class="text-xs text-gray-500"><span data-lang-de>Ausstehend</span><span data-lang-en>Due</span></p>
                         <p class="text-lg font-semibold text-red-600" id="stat-due">EUR 0</p>
                     </div>
                 </div>
@@ -177,7 +189,7 @@
                 <div class="flex items-center">
                     <div class="p-2 rounded-full bg-green-100"><i class="fas fa-coins text-green-600 text-sm"></i></div>
                     <div class="ml-3">
-                        <p class="text-xs text-gray-500">Received</p>
+                        <p class="text-xs text-gray-500"><span data-lang-de>Erhalten</span><span data-lang-en>Received</span></p>
                         <p class="text-lg font-semibold text-green-600" id="stat-received">EUR 0</p>
                     </div>
                 </div>
@@ -187,14 +199,14 @@
         <!-- Total Outstanding & Client List (desktop) -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 desktop-only">
             <div class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-2">Total Outstanding</h3>
+                <h3 class="text-lg font-medium text-gray-900 mb-2"><span data-lang-de>Offene Beträge</span><span data-lang-en>Total Outstanding</span></h3>
                 <p class="text-3xl font-bold text-red-600" id="stat-total-outstanding">EUR 0.00</p>
             </div>
             <div class="bg-white rounded-lg shadow p-6 md:col-span-2">
                 <div class="flex justify-between items-center mb-3">
-                    <h3 class="text-lg font-medium text-gray-900">Outstanding by Client</h3>
+                    <h3 class="text-lg font-medium text-gray-900"><span data-lang-de>Ausstehend nach Kunde</span><span data-lang-en>Outstanding by Client</span></h3>
                     <button id="show-all-btn" onclick="clearClientFilter()" class="text-sm text-blue-600 hover:underline hidden">
-                        <i class="fas fa-times mr-1"></i>Clear filter
+                        <i class="fas fa-times mr-1"></i><span data-lang-de>Filter löschen</span><span data-lang-en>Clear filter</span>
                     </button>
                 </div>
                 <div id="client-breakdown" class="space-y-1"></div>
@@ -204,18 +216,18 @@
         <!-- Action Bar (desktop) -->
         <div class="flex items-center justify-between mb-4 desktop-only">
             <div class="flex items-center space-x-3">
-                <button id="view-invoices-btn" onclick="showInvoicesView()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium">Invoices</button>
-                <button id="view-payments-btn" onclick="showPaymentsView()" class="px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50">Payments</button>
+                <button id="view-invoices-btn" onclick="showInvoicesView()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium"><span data-lang-de>Rechnungen</span><span data-lang-en>Invoices</span></button>
+                <button id="view-payments-btn" onclick="showPaymentsView()" class="px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50"><span data-lang-de>Zahlungen</span><span data-lang-en>Payments</span></button>
                 <span id="current-filter-label" class="text-gray-500 hidden">
-                    | Showing: <span id="filter-client-name" class="font-semibold text-blue-600"></span>
+                    | <span data-lang-de>Anzeige:</span><span data-lang-en>Showing:</span> <span id="filter-client-name" class="font-semibold text-blue-600"></span>
                 </span>
             </div>
             <div class="flex items-center space-x-2">
                 <button onclick="openPaymentModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
-                    <i class="fas fa-plus mr-2"></i>Add Payment
+                    <i class="fas fa-plus mr-2"></i><span data-lang-de>Zahlung hinzufügen</span><span data-lang-en>Add Payment</span>
                 </button>
                 <a href="/chat" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-                    <i class="fas fa-plus mr-2"></i>New Invoice
+                    <i class="fas fa-plus mr-2"></i><span data-lang-de>Neue Rechnung</span><span data-lang-en>New Invoice</span>
                 </a>
             </div>
         </div>
@@ -230,19 +242,19 @@
                 <table class="invoice-table w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="col-inv px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
-                            <th class="col-client px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
-                            <th class="col-desc px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                            <th class="col-amount px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th class="col-paid px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
-                            <th class="col-outstanding px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Outstanding</th>
-                            <th class="col-date px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="col-inv px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Rechnung Nr.</span><span data-lang-en>Invoice #</span></th>
+                            <th class="col-client px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Kunde</span><span data-lang-en>Client</span></th>
+                            <th class="col-desc px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Beschreibung</span><span data-lang-en>Description</span></th>
+                            <th class="col-amount px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Betrag</span><span data-lang-en>Amount</span></th>
+                            <th class="col-paid px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Bezahlt</span><span data-lang-en>Paid</span></th>
+                            <th class="col-outstanding px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Ausstehend</span><span data-lang-en>Outstanding</span></th>
+                            <th class="col-date px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Datum</span><span data-lang-en>Date</span></th>
                             <th class="col-status px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                             <th class="col-actions px-2 py-3"></th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200" id="invoice-table">
-                        <tr><td colspan="9" class="px-4 py-4 text-center text-gray-500">Loading...</td></tr>
+                        <tr><td colspan="9" class="px-4 py-4 text-center text-gray-500"><span data-lang-de>Laden...</span><span data-lang-en>Loading...</span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -254,16 +266,16 @@
                 <table class="w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Datum</span><span data-lang-en>Date</span></th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Kunde</span><span data-lang-en>Client</span></th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Rechnung Nr.</span><span data-lang-en>Invoice #</span></th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Betrag</span><span data-lang-en>Amount</span></th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Methode</span><span data-lang-en>Method</span></th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Notizen</span><span data-lang-en>Notes</span></th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200" id="payments-table">
-                        <tr><td colspan="6" class="px-4 py-4 text-center text-gray-500">Loading...</td></tr>
+                        <tr><td colspan="6" class="px-4 py-4 text-center text-gray-500"><span data-lang-de>Laden...</span><span data-lang-en>Loading...</span></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -272,14 +284,14 @@
         <!-- Mobile: Invoice Card List -->
         <div id="mobile-invoices-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4">
             <div id="mobile-invoice-list">
-                <div class="px-4 py-8 text-center text-gray-400">Loading...</div>
+                <div class="px-4 py-8 text-center text-gray-400"><span data-lang-de>Laden...</span><span data-lang-en>Loading...</span></div>
             </div>
         </div>
 
         <!-- Mobile: Payments Card List -->
         <div id="mobile-payments-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
             <div id="mobile-payments-list">
-                <div class="px-4 py-8 text-center text-gray-400">Loading...</div>
+                <div class="px-4 py-8 text-center text-gray-400"><span data-lang-de>Laden...</span><span data-lang-en>Loading...</span></div>
             </div>
         </div>
 
@@ -291,7 +303,7 @@
         <!-- Mobile: Drive Files View -->
         <div id="mobile-drive-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
             <div id="mobile-drive-list" class="divide-y divide-gray-100">
-                <div class="px-4 py-8 text-center text-gray-400">Loading files...</div>
+                <div class="px-4 py-8 text-center text-gray-400"><span data-lang-de>Dateien laden...</span><span data-lang-en>Loading files...</span></div>
             </div>
         </div>
 
@@ -300,12 +312,12 @@
             <div class="px-4 py-3 border-b flex items-center justify-between">
                 <div class="flex items-center gap-2">
                     <i class="fab fa-google-drive text-blue-500"></i>
-                    <span class="font-medium text-gray-900">Invoice PDFs</span>
+                    <span class="font-medium text-gray-900"><span data-lang-de>Rechnungs-PDFs</span><span data-lang-en>Invoice PDFs</span></span>
                 </div>
                 <span id="drive-file-count" class="text-sm text-gray-500"></span>
             </div>
             <div id="desktop-drive-list" class="divide-y divide-gray-100">
-                <div class="px-4 py-8 text-center text-gray-400">Loading files...</div>
+                <div class="px-4 py-8 text-center text-gray-400"><span data-lang-de>Dateien laden...</span><span data-lang-en>Loading files...</span></div>
             </div>
         </div>
     </main>
@@ -314,12 +326,12 @@
     <div id="mobile-action-menu" class="mobile-only hidden" style="position:fixed; bottom:80px; left:50%; transform:translateX(-50%); z-index:60; background:#1f2937; border-radius:16px; padding:8px; box-shadow:0 8px 30px rgba(0,0,0,0.3); min-width:200px;">
         <a href="/chat" style="display:flex; align-items:center; gap:12px; padding:12px 16px; color:white; text-decoration:none; border-radius:12px;" onclick="closeActionMenu()">
             <i class="fas fa-robot" style="width:20px; text-align:center; color:#60a5fa;"></i>
-            <span style="font-size:15px;">New Invoice (AI)</span>
+            <span style="font-size:15px;"><span data-lang-de>Neue Rechnung (KI)</span><span data-lang-en>New Invoice (AI)</span></span>
         </a>
         <div style="height:1px; background:#374151; margin:0 8px;"></div>
         <button onclick="closeActionMenu(); openPaymentModal();" style="display:flex; align-items:center; gap:12px; padding:12px 16px; color:white; border:none; background:none; width:100%; text-align:left; border-radius:12px; cursor:pointer;">
             <i class="fas fa-coins" style="width:20px; text-align:center; color:#34d399;"></i>
-            <span style="font-size:15px;">Record Payment</span>
+            <span style="font-size:15px;"><span data-lang-de>Zahlung erfassen</span><span data-lang-en>Record Payment</span></span>
         </button>
     </div>
 
@@ -349,16 +361,16 @@
     <div id="pdf-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl h-5/6 m-4 flex flex-col">
             <div class="flex justify-between items-center p-4 border-b">
-                <h3 class="text-lg font-medium">Invoice Preview</h3>
+                <h3 class="text-lg font-medium"><span data-lang-de>Rechnungsvorschau</span><span data-lang-en>Invoice Preview</span></h3>
                 <button onclick="closePdfModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <div class="flex-1 p-4">
                 <iframe id="pdf-frame" class="w-full h-full border rounded"></iframe>
             </div>
             <div class="p-4 border-t flex justify-end space-x-3">
-                <button onclick="closePdfModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Close</button>
-                <button id="download-btn" onclick="downloadInvoice()" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"><i class="fas fa-download mr-2"></i>Download</button>
-                <button id="send-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"><i class="fas fa-paper-plane mr-2"></i>Send Invoice</button>
+                <button onclick="closePdfModal()" class="px-4 py-2 border rounded hover:bg-gray-50"><span data-lang-de>Schließen</span><span data-lang-en>Close</span></button>
+                <button id="download-btn" onclick="downloadInvoice()" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"><i class="fas fa-download mr-2"></i><span data-lang-de>Herunterladen</span><span data-lang-en>Download</span></button>
+                <button id="send-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"><i class="fas fa-paper-plane mr-2"></i><span data-lang-de>Rechnung senden</span><span data-lang-en>Send Invoice</span></button>
             </div>
         </div>
     </div>
@@ -367,17 +379,17 @@
     <div id="client-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md m-4">
             <div class="flex justify-between items-center p-4 border-b">
-                <h3 class="text-lg font-medium">Add New Client</h3>
+                <h3 class="text-lg font-medium"><span data-lang-de>Neuen Kunden hinzufügen</span><span data-lang-en>Add New Client</span></h3>
                 <button onclick="closeClientModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <form id="client-form" class="p-4 space-y-4">
-                <div><label class="block text-sm font-medium text-gray-700">Company Name *</label><input type="text" name="name" required class="mt-1 w-full border rounded px-3 py-2"></div>
-                <div><label class="block text-sm font-medium text-gray-700">Address *</label><textarea name="address" required rows="2" class="mt-1 w-full border rounded px-3 py-2"></textarea></div>
-                <div><label class="block text-sm font-medium text-gray-700">Company ID (VAT/Tax) *</label><input type="text" name="company_id" required class="mt-1 w-full border rounded px-3 py-2"></div>
-                <div><label class="block text-sm font-medium text-gray-700">Email (optional)</label><input type="email" name="email" class="mt-1 w-full border rounded px-3 py-2"></div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Firmenname</span><span data-lang-en>Company Name</span> *</label><input type="text" name="name" required class="mt-1 w-full border rounded px-3 py-2"></div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Adresse</span><span data-lang-en>Address</span> *</label><textarea name="address" required rows="2" class="mt-1 w-full border rounded px-3 py-2"></textarea></div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Firmen-ID (USt/Steuer)</span><span data-lang-en>Company ID (VAT/Tax)</span> *</label><input type="text" name="company_id" required class="mt-1 w-full border rounded px-3 py-2"></div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>E-Mail (optional)</span><span data-lang-en>Email (optional)</span></label><input type="email" name="email" class="mt-1 w-full border rounded px-3 py-2"></div>
                 <div class="flex justify-end space-x-3 pt-4">
-                    <button type="button" onclick="closeClientModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
-                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Add Client</button>
+                    <button type="button" onclick="closeClientModal()" class="px-4 py-2 border rounded hover:bg-gray-50"><span data-lang-de>Abbrechen</span><span data-lang-en>Cancel</span></button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"><span data-lang-de>Kunde hinzufügen</span><span data-lang-en>Add Client</span></button>
                 </div>
             </form>
         </div>
@@ -387,24 +399,24 @@
     <div id="payment-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md m-4">
             <div class="flex justify-between items-center p-4 border-b">
-                <h3 class="text-lg font-medium">Record Payment</h3>
+                <h3 class="text-lg font-medium"><span data-lang-de>Zahlung erfassen</span><span data-lang-en>Record Payment</span></h3>
                 <button onclick="closePaymentModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <form id="payment-form" class="p-4 space-y-4">
-                <div><label class="block text-sm font-medium text-gray-700">Client *</label><select name="client_id" id="payment-client" required class="mt-1 w-full border rounded px-3 py-2"><option value="">Select client...</option></select></div>
-                <div><label class="block text-sm font-medium text-gray-700">Invoice *</label><select name="invoice_id" id="payment-invoice" required class="mt-1 w-full border rounded px-3 py-2"><option value="">Select invoice...</option></select><p id="invoice-due-info" class="text-sm text-gray-500 mt-1"></p></div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Kunde</span><span data-lang-en>Client</span> *</label><select name="client_id" id="payment-client" required class="mt-1 w-full border rounded px-3 py-2"><option value="">Select client...</option></select></div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Rechnung</span><span data-lang-en>Invoice</span> *</label><select name="invoice_id" id="payment-invoice" required class="mt-1 w-full border rounded px-3 py-2"><option value="">Select invoice...</option></select><p id="invoice-due-info" class="text-sm text-gray-500 mt-1"></p></div>
                 <div class="grid grid-cols-2 gap-4">
-                    <div><label class="block text-sm font-medium text-gray-700">Amount *</label><input type="number" name="amount" id="payment-amount" required step="0.01" min="0.01" class="mt-1 w-full border rounded px-3 py-2"></div>
-                    <div><label class="block text-sm font-medium text-gray-700">Currency</label><input type="text" name="currency" value="EUR" class="mt-1 w-full border rounded px-3 py-2 bg-gray-50" readonly></div>
+                    <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Betrag</span><span data-lang-en>Amount</span> *</label><input type="number" name="amount" id="payment-amount" required step="0.01" min="0.01" class="mt-1 w-full border rounded px-3 py-2"></div>
+                    <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Währung</span><span data-lang-en>Currency</span></label><input type="text" name="currency" value="EUR" class="mt-1 w-full border rounded px-3 py-2 bg-gray-50" readonly></div>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
-                    <div><label class="block text-sm font-medium text-gray-700">Date</label><input type="text" name="date" id="payment-date" placeholder="DD.MM.YYYY" class="mt-1 w-full border rounded px-3 py-2"></div>
-                    <div><label class="block text-sm font-medium text-gray-700">Method</label><select name="method" class="mt-1 w-full border rounded px-3 py-2"><option value="">Select...</option><option value="bank transfer">Bank Transfer</option><option value="cash">Cash</option><option value="other">Other</option></select></div>
+                    <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Datum</span><span data-lang-en>Date</span></label><input type="text" name="date" id="payment-date" placeholder="DD.MM.YYYY" class="mt-1 w-full border rounded px-3 py-2"></div>
+                    <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Methode</span><span data-lang-en>Method</span></label><select name="method" class="mt-1 w-full border rounded px-3 py-2"><option value="">Select...</option><option value="bank transfer">Bank Transfer</option><option value="cash">Cash</option><option value="other">Other</option></select></div>
                 </div>
-                <div><label class="block text-sm font-medium text-gray-700">Notes</label><input type="text" name="notes" placeholder="Reference number, etc." class="mt-1 w-full border rounded px-3 py-2"></div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Notizen</span><span data-lang-en>Notes</span></label><input type="text" name="notes" placeholder="Reference number, etc." class="mt-1 w-full border rounded px-3 py-2"></div>
                 <div class="flex justify-end space-x-3 pt-4">
-                    <button type="button" onclick="closePaymentModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
-                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"><i class="fas fa-check mr-2"></i>Record Payment</button>
+                    <button type="button" onclick="closePaymentModal()" class="px-4 py-2 border rounded hover:bg-gray-50"><span data-lang-de>Abbrechen</span><span data-lang-en>Cancel</span></button>
+                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"><i class="fas fa-check mr-2"></i><span data-lang-de>Zahlung erfassen</span><span data-lang-en>Record Payment</span></button>
                 </div>
             </form>
         </div>
@@ -414,47 +426,59 @@
     <div id="client-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl m-4 max-h-[90vh] flex flex-col">
             <div class="flex justify-between items-center p-4 border-b">
-                <h3 class="text-lg font-medium" id="client-detail-title">Client Details</h3>
+                <h3 class="text-lg font-medium" id="client-detail-title"><span data-lang-de>Kundendetails</span><span data-lang-en>Client Details</span></h3>
                 <button onclick="closeClientDetailModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
             </div>
             <div class="p-4 overflow-y-auto flex-1">
                 <div class="grid grid-cols-3 gap-4 mb-6">
-                    <div class="bg-blue-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600">Total Invoiced</p><p class="text-2xl font-bold text-blue-600" id="client-total-invoiced">EUR 0</p></div>
-                    <div class="bg-green-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600">Total Paid</p><p class="text-2xl font-bold text-green-600" id="client-total-paid">EUR 0</p></div>
-                    <div class="bg-red-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600">Outstanding</p><p class="text-2xl font-bold text-red-600" id="client-total-due">EUR 0</p></div>
+                    <div class="bg-blue-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600"><span data-lang-de>Gesamt berechnet</span><span data-lang-en>Total Invoiced</span></p><p class="text-2xl font-bold text-blue-600" id="client-total-invoiced">EUR 0</p></div>
+                    <div class="bg-green-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600"><span data-lang-de>Gesamt bezahlt</span><span data-lang-en>Total Paid</span></p><p class="text-2xl font-bold text-green-600" id="client-total-paid">EUR 0</p></div>
+                    <div class="bg-red-50 rounded-lg p-4 text-center"><p class="text-sm text-gray-600"><span data-lang-de>Ausstehend</span><span data-lang-en>Outstanding</span></p><p class="text-2xl font-bold text-red-600" id="client-total-due">EUR 0</p></div>
                 </div>
                 <div class="mb-6">
-                    <h4 class="text-md font-medium text-gray-900 mb-3">Invoices</h4>
+                    <h4 class="text-md font-medium text-gray-900 mb-3"><span data-lang-de>Rechnungen</span><span data-lang-en>Invoices</span></h4>
                     <div class="bg-gray-50 rounded-lg overflow-hidden">
                         <table class="min-w-full"><thead class="bg-gray-100"><tr>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Due</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Rechnung Nr.</span><span data-lang-en>Invoice #</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Datum</span><span data-lang-en>Date</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Betrag</span><span data-lang-en>Amount</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Bezahlt</span><span data-lang-en>Paid</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Ausstehend</span><span data-lang-en>Due</span></th>
                             <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                         </tr></thead><tbody id="client-invoices-table" class="divide-y divide-gray-200"></tbody></table>
                     </div>
                 </div>
                 <div>
-                    <h4 class="text-md font-medium text-gray-900 mb-3">Payment History</h4>
+                    <h4 class="text-md font-medium text-gray-900 mb-3"><span data-lang-de>Zahlungsverlauf</span><span data-lang-en>Payment History</span></h4>
                     <div class="bg-gray-50 rounded-lg overflow-hidden">
                         <table class="min-w-full"><thead class="bg-gray-100"><tr>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Datum</span><span data-lang-en>Date</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Betrag</span><span data-lang-en>Amount</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Rechnung</span><span data-lang-en>Invoice</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Methode</span><span data-lang-en>Method</span></th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Notizen</span><span data-lang-en>Notes</span></th>
                         </tr></thead><tbody id="client-payments-table" class="divide-y divide-gray-200"></tbody></table>
                     </div>
                 </div>
             </div>
             <div class="p-4 border-t flex justify-end">
-                <button onclick="closeClientDetailModal()" class="px-4 py-2 border rounded hover:bg-gray-50">Close</button>
+                <button onclick="closeClientDetailModal()" class="px-4 py-2 border rounded hover:bg-gray-50"><span data-lang-de>Schließen</span><span data-lang-en>Close</span></button>
             </div>
         </div>
     </div>
 
+    <script>
+        // Language toggle (shared across all pages via appLang)
+        function toggleLanguage() {
+            const html = document.documentElement;
+            const newLang = (html.getAttribute('lang') || 'de') === 'de' ? 'en' : 'de';
+            html.setAttribute('lang', newLang);
+            localStorage.setItem('appLang', newLang);
+        }
+        // Restore saved language preference
+        const savedLang = localStorage.getItem('appLang') || 'de';
+        document.documentElement.setAttribute('lang', savedLang);
+    </script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

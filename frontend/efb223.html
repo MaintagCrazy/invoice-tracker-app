@@ -245,10 +245,10 @@
             const currentLang = html.getAttribute('lang') || 'de';
             const newLang = currentLang === 'de' ? 'en' : 'de';
             html.setAttribute('lang', newLang);
-            localStorage.setItem('efb223Lang', newLang);
+            localStorage.setItem('appLang', newLang);
         }
 
-        const savedLang = localStorage.getItem('efb223Lang') || 'de';
+        const savedLang = localStorage.getItem('appLang') || 'de';
         document.documentElement.setAttribute('lang', savedLang);
 
         document.getElementById('efb223Form').addEventListener('submit', async (e) => {
