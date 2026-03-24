@@ -80,7 +80,11 @@ async def root():
     """Serve frontend or show API info"""
     index_path = os.path.join(frontend_path, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        })
     return {
         "app": "Invoice Tracker App",
         "version": "2.0.0",
@@ -96,10 +100,14 @@ async def root():
 
 @app.get("/chat")
 async def chat_page():
-    """Serve chat interface"""
+    """Serve chat interface (no-cache to ensure latest version)"""
     chat_path = os.path.join(frontend_path, "chat.html")
     if os.path.exists(chat_path):
-        return FileResponse(chat_path)
+        return FileResponse(chat_path, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        })
     return {"error": "Chat page not found"}
 
 
@@ -108,7 +116,11 @@ async def client_page():
     """Serve client detail page"""
     client_path = os.path.join(frontend_path, "client.html")
     if os.path.exists(client_path):
-        return FileResponse(client_path)
+        return FileResponse(client_path, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        })
     return {"error": "Client page not found"}
 
 
