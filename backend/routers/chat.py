@@ -39,7 +39,18 @@ def _execute_read_operation(function_name: str, args: dict, db) -> str:
 
         if query_type == "stats":
             stats = db.get_stats()
-            return json.dumps(stats, default=str)
+            msg = "**Dashboard Statistics:**\n"
+            msg += f"- Total invoices: {stats['total_invoices']}\n"
+            msg += f"- Draft: {stats['draft_count']} | Sent: {stats['sent_count']} | Paid: {stats['paid_count']}\n"
+            msg += f"- Total invoiced: EUR {stats['total_amount']:,.2f}\n"
+            msg += f"- Total paid: EUR {stats['total_paid']:,.2f}\n"
+            msg += f"- Outstanding: EUR {stats['total_due']:,.2f}\n"
+            if stats.get("due_by_client"):
+                msg += "\n**Outstanding by client:**\n"
+                for name, due in stats["due_by_client"].items():
+                    if due > 0:
+                        msg += f"- {name}: EUR {due:,.2f}\n"
+            return msg
 
         elif query_type == "balance":
             if client_name:
@@ -47,19 +58,22 @@ def _execute_read_operation(function_name: str, args: dict, db) -> str:
                 if not client:
                     return f"Client '{client_name}' not found."
                 summary = db.get_client_summary(client["id"])
-                return json.dumps({
-                    "client": client_name,
-                    "total_invoiced": summary["total_invoiced"],
-                    "total_paid": summary["total_paid"],
-                    "outstanding": summary["total_due"],
-                    "invoice_count": summary["invoice_count"]
-                }, default=str)
+                msg = f"**Balance for {client['name']}:**\n"
+                msg += f"- Total invoiced: EUR {summary['total_invoiced']:,.2f}\n"
+                msg += f"- Total paid: EUR {summary['total_paid']:,.2f}\n"
+                msg += f"- Outstanding: EUR {summary['total_due']:,.2f}\n"
+                msg += f"- Invoices: {summary['invoice_count']}"
+                return msg
             stats = db.get_stats()
-            return json.dumps({
-                "total_due": stats["total_due"],
-                "total_paid": stats["total_paid"],
-                "due_by_client": stats.get("due_by_client", {})
-            }, default=str)
+            msg = "**Overall Balance:**\n"
+            msg += f"- Total outstanding: EUR {stats['total_due']:,.2f}\n"
+            msg += f"- Total paid: EUR {stats['total_paid']:,.2f}\n"
+            if stats.get("due_by_client"):
+                msg += "\n**By client:**\n"
+                for name, due in stats["due_by_client"].items():
+                    if due > 0:
+                        msg += f"- {name}: EUR {due:,.2f}\n"
+            return msg
 
         elif query_type == "invoices":
             if client_name:
@@ -67,19 +81,25 @@ def _execute_read_operation(function_name: str, args: dict, db) -> str:
                 if not client:
                     return f"Client '{client_name}' not found."
                 invoices = db.get_invoices(client_id=client["id"])
+                header = f"Invoices for **{client['name']}**:"
             else:
                 invoices = db.get_invoices()
-            summary = [{
-                "invoice_number": i["invoice_number"],
-                "file_number": i["file_number"],
-                "client": i["client"]["name"] if i.get("client") else "?",
-                "amount": i["amount"],
-                "currency": i.get("currency", "EUR"),
-                "amount_due": i["amount_due"],
-                "status": i["status"],
-                "issue_date": i.get("issue_date", "")
-            } for i in invoices[:20]]
-            return json.dumps(summary, default=str)
+                header = "All invoices:"
+            if not invoices:
+                return f"No invoices found{' for ' + client_name if client_name else ''}."
+            lines = []
+            for i in invoices[:20]:
+                currency = i.get("currency", "EUR")
+                client_display = i["client"]["name"] if i.get("client") else "?"
+                status_icon = {"draft": "Draft", "sent": "Sent", "paid": "Paid"}.get(i["status"], i["status"])
+                line = f"- **#{i['file_number']}** ({i['invoice_number']}) — {client_display} — {currency} {i['amount']:,.2f}"
+                if i["amount_due"] > 0 and i["amount_due"] != i["amount"]:
+                    line += f" (due: {currency} {i['amount_due']:,.2f})"
+                line += f" — {status_icon}"
+                if i.get("issue_date"):
+                    line += f" — {i['issue_date']}"
+                lines.append(line)
+            return header + "\n" + "\n".join(lines)
 
         elif query_type == "payments":
             if client_name:
@@ -87,18 +107,22 @@ def _execute_read_operation(function_name: str, args: dict, db) -> str:
                 if not client:
                     return f"Client '{client_name}' not found."
                 payments = db.get_payments(client_id=client["id"])
+                header = f"Payments for **{client['name']}**:"
             else:
                 payments = db.get_payments()
-            summary = [{
-                "id": p["id"],
-                "invoice_id": p["invoice_id"],
-                "client": p["client"],
-                "amount": p["amount"],
-                "currency": p.get("currency", "EUR"),
-                "date": p.get("date", ""),
-                "method": p.get("method", "")
-            } for p in payments[:20]]
-            return json.dumps(summary, default=str)
+                header = "All payments:"
+            if not payments:
+                return f"No payments found{' for ' + client_name if client_name else ''}."
+            lines = []
+            for p in payments[:20]:
+                currency = p.get("currency", "EUR")
+                line = f"- Payment #{p['id']} — Invoice #{p['invoice_id']} — {p['client']} — {currency} {p['amount']:,.2f}"
+                if p.get("date"):
+                    line += f" — {p['date']}"
+                if p.get("method"):
+                    line += f" ({p['method']})"
+                lines.append(line)
+            return header + "\n" + "\n".join(lines)
 
         return "Unknown query type."
 
