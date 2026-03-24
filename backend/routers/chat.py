@@ -310,6 +310,20 @@ async def confirm_action(conversation_id: str):
                 "message": f"Invoice #{invoice_id} updated successfully!"
             }
 
+        elif function_name == "delete_invoice":
+            invoice_id = int(args["invoice_id"])
+            success = db.delete_invoice(invoice_id)
+            if not success:
+                raise HTTPException(status_code=404, detail=f"Invoice #{invoice_id} not found")
+
+            ai_service.clear_conversation(conversation_id)
+            return {
+                "success": True,
+                "action_type": "delete_invoice",
+                "invoice_id": invoice_id,
+                "message": f"Invoice #{invoice_id} moved to trash. You can restore it within 30 days."
+            }
+
         else:
             raise HTTPException(status_code=400, detail=f"Unknown action: {function_name}")
 

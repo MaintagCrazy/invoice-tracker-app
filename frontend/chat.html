@@ -76,6 +76,7 @@
                             <li><i class="fas fa-users text-orange-500 w-5"></i> List &amp; manage clients</li>
                             <li><i class="fas fa-chart-bar text-indigo-500 w-5"></i> Check balances &amp; stats</li>
                             <li><i class="fas fa-edit text-yellow-500 w-5"></i> Edit invoices</li>
+                            <li><i class="fas fa-trash text-red-500 w-5"></i> Delete invoices (with 30-day undo)</li>
                         </ul>
                         <p class="text-gray-500 text-xs mt-3">Type <strong>/help</strong> anytime for full details</p>
                     </div>
@@ -263,6 +264,22 @@
                             <option value="paid">Paid</option>
                         </select>
                     </div>
+                </div>
+
+                <!-- Delete Invoice Form -->
+                <div id="form-delete-invoice" class="hidden space-y-3">
+                    <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                        <div class="flex items-center mb-2">
+                            <i class="fas fa-exclamation-triangle text-red-500 mr-2"></i>
+                            <span class="font-medium text-red-800">Delete Invoice</span>
+                        </div>
+                        <p class="text-sm text-red-700">This invoice will be moved to trash. You can restore it within 30 days. After that, it will be permanently deleted.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Invoice #</label>
+                        <input type="number" id="cf-delete-invoice-id" class="w-full border rounded-lg px-3 py-2 bg-gray-50" readonly>
+                    </div>
+                    <div id="cf-delete-invoice-info" class="text-sm text-gray-600"></div>
                 </div>
 
                 <!-- Action buttons -->
@@ -521,7 +538,7 @@
             const previewBtn = document.getElementById('preview-draft-btn');
 
             // Hide all forms
-            document.querySelectorAll('#form-invoice, #form-payment, #form-client, #form-edit-invoice')
+            document.querySelectorAll('#form-invoice, #form-payment, #form-client, #form-edit-invoice, #form-delete-invoice')
                 .forEach(f => f.classList.add('hidden'));
             previewBtn.classList.add('hidden');
 
@@ -590,6 +607,19 @@
                 document.getElementById('cf-edit-amount').value = data.new_amount || '';
                 document.getElementById('cf-edit-description').value = data.new_description || '';
                 document.getElementById('cf-edit-status').value = data.new_status || '';
+
+            } else if (actionType === 'delete_invoice') {
+                title.textContent = 'Delete Invoice';
+                icon.className = 'w-12 h-12 rounded-full bg-red-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-trash text-red-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-trash mr-2"></i>Delete Invoice';
+                confirmCreateBtn.className = 'px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700';
+
+                document.getElementById('form-delete-invoice').classList.remove('hidden');
+                document.getElementById('cf-delete-invoice-id').value = data.invoice_id || '';
+
+                // Load invoice details to show what's being deleted
+                loadDeleteInvoiceInfo(data.invoice_id);
             }
 
             confirmModal.classList.remove('hidden');
@@ -621,6 +651,30 @@
                 }
             } catch (e) {
                 sel.innerHTML = '<option value="">Error loading invoices</option>';
+            }
+        }
+
+        async function loadDeleteInvoiceInfo(invoiceId) {
+            const infoDiv = document.getElementById('cf-delete-invoice-info');
+            if (!invoiceId) { infoDiv.innerHTML = ''; return; }
+            try {
+                const resp = await fetch(`${API_BASE}/api/invoices/${invoiceId}`);
+                if (resp.ok) {
+                    const inv = await resp.json();
+                    const clientName = inv.client ? inv.client.name : 'Unknown';
+                    infoDiv.innerHTML = `
+                        <div class="bg-gray-50 rounded-lg p-3 space-y-1">
+                            <div><strong>Invoice:</strong> ${inv.invoice_number}</div>
+                            <div><strong>Client:</strong> ${clientName}</div>
+                            <div><strong>Amount:</strong> ${inv.currency || 'EUR'} ${parseFloat(inv.amount).toLocaleString()}</div>
+                            <div><strong>Description:</strong> ${inv.description || '-'}</div>
+                            <div><strong>Status:</strong> ${inv.status}</div>
+                        </div>`;
+                } else {
+                    infoDiv.innerHTML = '<p class="text-red-500">Could not load invoice details.</p>';
+                }
+            } catch (e) {
+                infoDiv.innerHTML = '<p class="text-red-500">Error loading invoice info.</p>';
             }
         }
 
@@ -657,6 +711,8 @@
         function closeConfirmModal() {
             confirmModal.classList.add('hidden');
             confirmModal.classList.remove('flex');
+            // Reset confirm button to default blue style (may have been changed to red for delete)
+            confirmCreateBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700';
         }
 
         // ============ CONFIRM: DIRECT REST CALLS ============
@@ -734,6 +790,21 @@
                     result = await resp.json();
                     if (!resp.ok) {
                         throw new Error(result.detail || 'Failed to edit invoice');
+                    }
+
+                } else if (currentActionType === 'delete_invoice') {
+                    const invoiceId = document.getElementById('cf-delete-invoice-id').value;
+                    const resp = await fetch(`${API_BASE}/api/invoices/${invoiceId}`, {
+                        method: 'DELETE'
+                    });
+                    result = await resp.json();
+                    if (resp.ok) {
+                        result.success = true;
+                        result.action_type = 'delete_invoice';
+                        result.invoice_id = parseInt(invoiceId);
+                        result.message = result.message || `Invoice #${invoiceId} moved to trash. You can restore it within 30 days.`;
+                    } else {
+                        throw new Error(result.detail || 'Failed to delete invoice');
                     }
                 }
 
@@ -844,8 +915,25 @@
             undoToast.classList.add('hidden');
 
             const { type, id } = lastCreatedAction;
-            let url = '';
 
+            // For delete_invoice undo, we call restore instead of DELETE
+            if (type === 'delete_invoice') {
+                try {
+                    const resp = await fetch(`${API_BASE}/api/invoices/${id}/restore`, { method: 'POST' });
+                    if (resp.ok) {
+                        addMessage(`Undo successful! Invoice #${id} has been restored.`);
+                    } else {
+                        const err = await resp.json();
+                        addMessage(`Undo failed: ${err.detail || 'Unknown error'}`);
+                    }
+                } catch (e) {
+                    addMessage('Undo failed: connection error.');
+                }
+                lastCreatedAction = null;
+                return;
+            }
+
+            let url = '';
             if (type === 'invoice') url = `${API_BASE}/api/invoices/${id}`;
             else if (type === 'payment') url = `${API_BASE}/api/payments/${id}`;
             else if (type === 'add_client') url = `${API_BASE}/api/clients/${id}`;

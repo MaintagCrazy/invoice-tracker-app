@@ -303,7 +303,8 @@ class SheetsDatabaseService:
                     "sent_at": None,
                     "paid_at": None,
                     "pdf_path": None,
-                    "drive_file_id": row.get('Drive File ID', '')
+                    "drive_file_id": row.get('Drive File ID', ''),
+                    "deleted_at": row.get('Deleted At', '')
                 }
                 invoices.append(invoice)
 
@@ -315,14 +316,21 @@ class SheetsDatabaseService:
             logger.error(f"Error fetching invoices: {e}")
             return []
 
-    def get_invoices(self, status: Optional[str] = None, client_id: Optional[int] = None) -> List[Dict]:
-        """Get invoices with optional filters (uses cached data)"""
+    def get_invoices(self, status: Optional[str] = None, client_id: Optional[int] = None, include_deleted: bool = False) -> List[Dict]:
+        """Get invoices with optional filters (uses cached data). Excludes deleted invoices by default."""
         invoices = self._load_all_invoices()
+        if not include_deleted:
+            invoices = [i for i in invoices if i['status'] != 'deleted']
         if status:
             invoices = [i for i in invoices if i['status'] == status]
         if client_id:
             invoices = [i for i in invoices if i['client_id'] == client_id]
         return invoices
+
+    def get_deleted_invoices(self) -> List[Dict]:
+        """Get all soft-deleted invoices (for the trash/deleted view)"""
+        all_invoices = self._load_all_invoices()
+        return [i for i in all_invoices if i['status'] == 'deleted']
 
     def get_invoice(self, invoice_id: int) -> Optional[Dict]:
         """Get single invoice by ID (file number)"""
@@ -479,20 +487,75 @@ class SheetsDatabaseService:
             return False
 
     def delete_invoice(self, file_number: int) -> bool:
-        """Delete an invoice row from the Database sheet"""
+        """Soft-delete an invoice: set status to 'deleted' and record deletion date.
+        Invoice remains in the sheet for 30 days and can be restored."""
         try:
             all_data = self.db_worksheet.get_all_records()
             for idx, row in enumerate(all_data):
                 if int(row.get('File #', 0)) == file_number:
                     row_num = idx + 2
-                    self.db_worksheet.delete_rows(row_num)
+                    # Set status to "deleted" (column J = 10)
+                    self.db_worksheet.update_cell(row_num, 10, "deleted")
+                    # Set Deleted At date (column L = 12)
+                    self.db_worksheet.update_cell(row_num, 12, datetime.now().isoformat())
                     self._cache_invalidate("invoices")
-                    logger.info(f"Deleted invoice {file_number}")
+                    logger.info(f"Soft-deleted invoice {file_number}")
                     return True
             return False
         except Exception as e:
-            logger.error(f"Error deleting invoice {file_number}: {e}")
+            logger.error(f"Error soft-deleting invoice {file_number}: {e}")
             return False
+
+    def restore_invoice(self, file_number: int) -> bool:
+        """Restore a soft-deleted invoice back to draft status"""
+        try:
+            all_data = self.db_worksheet.get_all_records()
+            for idx, row in enumerate(all_data):
+                if int(row.get('File #', 0)) == file_number:
+                    if row.get('Status') != 'deleted':
+                        logger.warning(f"Invoice {file_number} is not deleted, cannot restore")
+                        return False
+                    row_num = idx + 2
+                    # Set status back to "draft" (column J = 10)
+                    self.db_worksheet.update_cell(row_num, 10, "draft")
+                    # Clear Deleted At (column L = 12)
+                    self.db_worksheet.update_cell(row_num, 12, "")
+                    self._cache_invalidate("invoices")
+                    logger.info(f"Restored invoice {file_number}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error restoring invoice {file_number}: {e}")
+            return False
+
+    def purge_old_deleted_invoices(self, days: int = 30) -> int:
+        """Permanently delete invoices that have been soft-deleted for more than `days` days"""
+        try:
+            all_data = self.db_worksheet.get_all_records()
+            cutoff = datetime.now() - timedelta(days=days)
+            rows_to_delete = []
+
+            for idx, row in enumerate(all_data):
+                if row.get('Status') == 'deleted' and row.get('Deleted At'):
+                    try:
+                        deleted_at = datetime.fromisoformat(row['Deleted At'])
+                        if deleted_at < cutoff:
+                            rows_to_delete.append(idx + 2)
+                    except (ValueError, TypeError):
+                        pass
+
+            # Delete in reverse order to maintain row indices
+            for row_num in sorted(rows_to_delete, reverse=True):
+                self.db_worksheet.delete_rows(row_num)
+
+            if rows_to_delete:
+                self._cache_invalidate("invoices")
+                logger.info(f"Purged {len(rows_to_delete)} deleted invoices older than {days} days")
+
+            return len(rows_to_delete)
+        except Exception as e:
+            logger.error(f"Error purging deleted invoices: {e}")
+            return 0
 
     def delete_client(self, client_id: int) -> bool:
         """Delete a client row from the Clients sheet"""

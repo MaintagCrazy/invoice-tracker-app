@@ -208,11 +208,28 @@ FUNCTION_TOOLS = [
                 "required": ["invoice_id"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_invoice",
+            "description": "Delete an invoice. The invoice will be moved to trash and can be restored within 30 days. After 30 days it is permanently deleted.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "invoice_id": {
+                        "type": "integer",
+                        "description": "The invoice file number to delete"
+                    }
+                },
+                "required": ["invoice_id"]
+            }
+        }
     }
 ]
 
 # Write operations need user confirmation before executing
-WRITE_OPERATIONS = {"create_invoice", "record_payment", "add_client", "edit_invoice"}
+WRITE_OPERATIONS = {"create_invoice", "record_payment", "add_client", "edit_invoice", "delete_invoice"}
 # Read operations execute immediately
 READ_OPERATIONS = {"list_clients", "query_data", "get_invoice_pdf"}
 
@@ -244,6 +261,7 @@ SYSTEM_PROMPT = """You are the AI assistant for C.D. Grupa Budowlana's invoice t
 - Create invoices (client + amount + description, dates optional)
 - Record payments (client + amount + invoice number)
 - Edit invoices (change amount, description, or status)
+- Delete invoices ("delete invoice 15") — moves to trash, restorable for 30 days
 - Add new clients (just paste client details)
 - List clients ("show my clients")
 - Check balances ("what does [client] owe?")
@@ -328,6 +346,11 @@ class AIService:
             if args.get("new_status"):
                 msg += f"- New status: {args['new_status']}\n"
             msg += "\nPlease review and confirm."
+            return msg
+
+        elif function_name == "delete_invoice":
+            msg = f"Are you sure you want to delete invoice **#{args.get('invoice_id', '?')}**?\n\n"
+            msg += "The invoice will be moved to trash and can be restored within 30 days. After that, it will be permanently deleted."
             return msg
 
         return "Please confirm this action."
@@ -416,7 +439,8 @@ class AIService:
                         "create_invoice": "invoice",
                         "record_payment": "payment",
                         "add_client": "add_client",
-                        "edit_invoice": "edit_invoice"
+                        "edit_invoice": "edit_invoice",
+                        "delete_invoice": "delete_invoice"
                     }
 
                     extracted_data = {**function_args, "action_type": action_type_map.get(function_name, function_name)}
