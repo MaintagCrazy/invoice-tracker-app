@@ -120,6 +120,21 @@ def create_invoice(
     return invoice
 
 
+@router.get("/deleted/list")
+def list_deleted_invoices():
+    """List all soft-deleted invoices (trash view)"""
+    db = get_sheets_db()
+    return db.get_deleted_invoices()
+
+
+@router.post("/deleted/purge")
+def purge_deleted_invoices(days: int = 30):
+    """Permanently delete invoices that have been in trash for more than X days"""
+    db = get_sheets_db()
+    count = db.purge_old_deleted_invoices(days=days)
+    return {"success": True, "purged_count": count}
+
+
 @router.get("/{invoice_id}")
 def get_invoice(invoice_id: int):
     """Get a single invoice by ID"""
@@ -290,13 +305,6 @@ def patch_invoice(invoice_id: int, data: InvoicePatchRequest):
     return {"success": True, "invoice_id": invoice_id, "updated": list(updates.keys())}
 
 
-@router.get("/deleted/list")
-def list_deleted_invoices():
-    """List all soft-deleted invoices (trash view)"""
-    db = get_sheets_db()
-    return db.get_deleted_invoices()
-
-
 @router.delete("/{invoice_id}")
 def delete_invoice(invoice_id: int):
     """Soft-delete an invoice (moves to trash, restorable for 30 days)"""
@@ -311,18 +319,12 @@ def delete_invoice(invoice_id: int):
 def restore_invoice(invoice_id: int):
     """Restore a soft-deleted invoice from trash"""
     db = get_sheets_db()
-    success = db.restore_invoice(invoice_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Invoice not found or not deleted")
+    result = db.restore_invoice(invoice_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="Invoice not found — it may have been permanently purged")
+    if result == "not_deleted":
+        raise HTTPException(status_code=409, detail="Invoice is not in trash — it's already active")
     return {"success": True, "invoice_id": invoice_id, "message": f"Invoice #{invoice_id} restored successfully"}
-
-
-@router.post("/deleted/purge")
-def purge_deleted_invoices(days: int = 30):
-    """Permanently delete invoices that have been in trash for more than X days"""
-    db = get_sheets_db()
-    count = db.purge_old_deleted_invoices(days=days)
-    return {"success": True, "purged_count": count}
 
 
 @router.post("/{invoice_id}/mark-paid")

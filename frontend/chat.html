@@ -328,6 +328,7 @@
         let lastCreatedAction = null;
         let undoTimer = null;
         let undoCountdown = 10;
+        let confirmInFlight = false; // double-submit guard
 
         // Exchange rate cache
         let exchangeRate = null;
@@ -537,10 +538,12 @@
             const icon = document.getElementById('confirm-icon');
             const previewBtn = document.getElementById('preview-draft-btn');
 
-            // Hide all forms
+            // Reset all forms and button style
             document.querySelectorAll('#form-invoice, #form-payment, #form-client, #form-edit-invoice, #form-delete-invoice')
                 .forEach(f => f.classList.add('hidden'));
             previewBtn.classList.add('hidden');
+            confirmCreateBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700';
+            confirmInFlight = false;
 
             const actionType = data.action_type || 'invoice';
 
@@ -718,6 +721,8 @@
         // ============ CONFIRM: DIRECT REST CALLS ============
 
         confirmCreateBtn.addEventListener('click', async () => {
+            if (confirmInFlight) return; // prevent double-submit
+            confirmInFlight = true;
             confirmCreateBtn.disabled = true;
             confirmCreateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
 
@@ -841,6 +846,7 @@
         });
 
         function resetConfirmBtn() {
+            confirmInFlight = false;
             confirmCreateBtn.disabled = false;
             confirmCreateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>Confirm';
         }

@@ -3,6 +3,7 @@ AI Service using OpenRouter with native function calling (tool use)
 """
 import json
 import logging
+import time
 import uuid
 from typing import Optional, Dict, Any, List
 
@@ -286,12 +287,24 @@ class AIService:
         self.model = config.AI_MODEL
         self.base_url = config.AI_BASE_URL
         self.conversations: Dict[str, list] = {}
+        self.conversation_ts: Dict[str, float] = {}  # last activity timestamp
         self.pending_actions: Dict[str, Dict[str, Any]] = {}
 
     def _get_conversation(self, conversation_id: str) -> list:
         if conversation_id not in self.conversations:
             self.conversations[conversation_id] = []
+        self.conversation_ts[conversation_id] = time.time()
+        self._cleanup_old_conversations()
         return self.conversations[conversation_id]
+
+    def _cleanup_old_conversations(self, max_age: int = 3600):
+        """Remove conversations idle for more than max_age seconds (default 1 hour)"""
+        now = time.time()
+        stale = [cid for cid, ts in self.conversation_ts.items() if now - ts > max_age]
+        for cid in stale:
+            self.conversations.pop(cid, None)
+            self.conversation_ts.pop(cid, None)
+            self.pending_actions.pop(cid, None)
 
     def _add_to_conversation(self, conversation_id: str, message: dict):
         """Add a message dict to conversation history"""
@@ -301,12 +314,20 @@ class AIService:
             self.conversations[conversation_id] = history[-20:]
 
     def store_pending_action(self, conversation_id: str, action: Dict[str, Any]):
-        """Store a pending write action for later confirmation"""
+        """Store a pending write action for later confirmation (with timestamp)"""
+        action["_stored_at"] = time.time()
         self.pending_actions[conversation_id] = action
 
-    def get_pending_action(self, conversation_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve and remove a pending action"""
-        return self.pending_actions.pop(conversation_id, None)
+    def get_pending_action(self, conversation_id: str, max_age_seconds: int = 900) -> Optional[Dict[str, Any]]:
+        """Retrieve and remove a pending action. Returns None if expired (default 15min)."""
+        action = self.pending_actions.pop(conversation_id, None)
+        if action is None:
+            return None
+        stored_at = action.pop("_stored_at", 0)
+        if time.time() - stored_at > max_age_seconds:
+            logger.warning(f"Pending action for {conversation_id} expired ({time.time() - stored_at:.0f}s old)")
+            return None
+        return action
 
     def _generate_confirmation_message(self, function_name: str, args: dict) -> str:
         """Generate a human-readable confirmation message for a tool call"""
@@ -437,6 +458,25 @@ class AIService:
                     function_args = json.loads(tool_call["function"]["arguments"])
                 except (json.JSONDecodeError, KeyError):
                     function_args = {}
+
+                # Validate required args for write operations
+                required_args = {
+                    "create_invoice": ["client_name", "amount", "description"],
+                    "record_payment": ["client_name", "amount", "invoice_id"],
+                    "add_client": ["client_name"],
+                    "edit_invoice": ["invoice_id"],
+                    "delete_invoice": ["invoice_id"],
+                }
+                if function_name in required_args:
+                    missing = [a for a in required_args[function_name] if a not in function_args]
+                    if missing:
+                        logger.warning(f"AI returned {function_name} with missing args: {missing}")
+                        return {
+                            "response": f"I need more information: {', '.join(missing)}. Could you please provide those details?",
+                            "conversation_id": conversation_id,
+                            "extracted_data": None,
+                            "needs_confirmation": False,
+                        }
 
                 if function_name in WRITE_OPERATIONS:
                     # Write operation: needs user confirmation

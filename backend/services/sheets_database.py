@@ -104,11 +104,22 @@ class SheetsDatabaseService:
             self.db_worksheet = self.sheet.worksheet(DATABASE_TAB)
             self._init_payments_worksheet()
             self._init_clients_worksheet()
+            self._ensure_deleted_at_column()
             logger.info(f"Connected to Google Sheet: {SHEET_ID}")
 
         except Exception as e:
             logger.error(f"Failed to connect to Google Sheets: {e}")
             raise
+
+    def _ensure_deleted_at_column(self):
+        """Ensure the Database sheet has a 'Deleted At' header in column L (12)"""
+        try:
+            headers = self.db_worksheet.row_values(1)
+            if len(headers) < 12 or headers[11] != "Deleted At":
+                self.db_worksheet.update_cell(1, 12, "Deleted At")
+                logger.info("Added 'Deleted At' column header to Database sheet")
+        except Exception as e:
+            logger.warning(f"Could not ensure 'Deleted At' column: {e}")
 
     def _init_payments_worksheet(self):
         """Initialize Payments worksheet (create if not exists)"""
@@ -506,15 +517,15 @@ class SheetsDatabaseService:
             logger.error(f"Error soft-deleting invoice {file_number}: {e}")
             return False
 
-    def restore_invoice(self, file_number: int) -> bool:
-        """Restore a soft-deleted invoice back to draft status"""
+    def restore_invoice(self, file_number: int) -> str:
+        """Restore a soft-deleted invoice. Returns 'restored', 'not_deleted', or 'not_found'."""
         try:
             all_data = self.db_worksheet.get_all_records()
             for idx, row in enumerate(all_data):
                 if int(row.get('File #', 0)) == file_number:
                     if row.get('Status') != 'deleted':
                         logger.warning(f"Invoice {file_number} is not deleted, cannot restore")
-                        return False
+                        return "not_deleted"
                     row_num = idx + 2
                     # Set status back to "draft" (column J = 10)
                     self.db_worksheet.update_cell(row_num, 10, "draft")
@@ -522,11 +533,11 @@ class SheetsDatabaseService:
                     self.db_worksheet.update_cell(row_num, 12, "")
                     self._cache_invalidate("invoices")
                     logger.info(f"Restored invoice {file_number}")
-                    return True
-            return False
+                    return "restored"
+            return "not_found"
         except Exception as e:
             logger.error(f"Error restoring invoice {file_number}: {e}")
-            return False
+            return "not_found"
 
     def purge_old_deleted_invoices(self, days: int = 30) -> int:
         """Permanently delete invoices that have been soft-deleted for more than `days` days"""
