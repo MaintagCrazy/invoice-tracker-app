@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
-from routers import invoices_router, clients_router, chat_router, email_router, payments_router, sync_router, efb223_router
+from routers import invoices_router, clients_router, chat_router, email_router, payments_router, sync_router, efb223_router, ksef_router
 from config import config
 
 # Configure logging
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Invoice Tracker App",
     description="AI-powered invoice creation and tracking - Google Sheets backend",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
@@ -69,6 +69,13 @@ if efb223_router is not None:
 else:
     logger.warning("EFB 223 Generator not available (missing dependencies: anthropic, openpyxl, fpdf2, pikepdf)")
 
+# KSeF 2.0 router - only include if ksef2 SDK is available
+if ksef_router is not None:
+    app.include_router(ksef_router)
+    logger.info("KSeF 2.0 integration loaded")
+else:
+    logger.warning("KSeF 2.0 not available (missing dependency: ksef2)")
+
 # Serve static files (frontend)
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):
@@ -87,12 +94,13 @@ async def root():
         })
     return {
         "app": "Invoice Tracker App",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "database": "Google Sheets",
         "endpoints": {
             "invoices": "/api/invoices",
             "clients": "/api/clients",
             "chat": "/api/chat",
+            "ksef": "/api/ksef",
             "docs": "/docs"
         }
     }
@@ -159,6 +167,15 @@ async def health_check():
         drive_error = str(e)
         logger.error(f"Drive folder error: {e}")
 
+    # Test KSeF connectivity
+    ksef_ok = False
+    try:
+        from services.ksef_service import check_ksef_health
+        ksef_result = check_ksef_health()
+        ksef_ok = ksef_result.get("available", False)
+    except Exception:
+        pass
+
     # Check env vars presence (not values)
     env_check = {
         "GOOGLE_SERVICE_ACCOUNT_B64": bool(os.environ.get("GOOGLE_SERVICE_ACCOUNT_B64")),
@@ -167,6 +184,7 @@ async def health_check():
         "GMAIL_CREDENTIALS_B64": bool(os.environ.get("GMAIL_CREDENTIALS_B64")),
         "DRIVE_TOKEN_B64": bool(os.environ.get("DRIVE_TOKEN_B64")),
         "ANTHROPIC_API_KEY": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "KSEF_TOKEN": bool(os.environ.get("KSEF_TOKEN")),
     }
 
     result = {
@@ -174,6 +192,7 @@ async def health_check():
         "database": "google_sheets",
         "sheets_connected": sheets_ok,
         "drive_connected": drive_ok,
+        "ksef_connected": ksef_ok,
         "ai_configured": bool(config.OPENROUTER_API_KEY),
         "email_configured": bool(config.GMAIL_TOKEN_B64),
         "env_vars": env_check,

@@ -51,6 +51,10 @@ class Config:
         'swift': 'BIGBPLPW'
     }
 
+    # KSeF 2.0 (Polish National e-Invoice System)
+    KSEF_TOKEN: str = os.environ.get("KSEF_TOKEN", "")
+    KSEF_ENVIRONMENT: str = os.environ.get("KSEF_ENVIRONMENT", "production")
+
     @classmethod
     def is_production(cls) -> bool:
         """Check if running in production (Railway)"""

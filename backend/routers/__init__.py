@@ -11,3 +11,9 @@ try:
     from .efb223 import router as efb223_router
 except ImportError:
     efb223_router = None
+
+# KSeF 2.0 integration (requires ksef2 SDK).
+try:
+    from .ksef import router as ksef_router
+except ImportError:
+    ksef_router = None
