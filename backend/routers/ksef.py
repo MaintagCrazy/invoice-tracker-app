@@ -33,8 +33,8 @@ def submit_to_ksef(invoice_id: int):
         # Store KSeF reference in invoice metadata
         try:
             updates = {}
-            if result.get("ksef_reference_number"):
-                updates["ksef_reference"] = result["ksef_reference_number"]
+            if result.get("ksef_number"):
+                updates["ksef_reference"] = result["ksef_number"]
                 updates["ksef_status"] = result.get("ksef_status", "submitted")
             if updates:
                 db.update_invoice(invoice_id, updates)
@@ -44,7 +44,6 @@ def submit_to_ksef(invoice_id: int):
         return {
             "success": True,
             "invoice_id": invoice_id,
-            "invoice_number": invoice["invoice_number"],
             **result
         }
     except RuntimeError as e:

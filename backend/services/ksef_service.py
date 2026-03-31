@@ -30,6 +30,7 @@ try:
     from ksef2.infra.schema.fa3.models.elementarne_typy_danych_v10_0_e import Twybor12
     from ksef2.infra.schema.fa3.models.kody_krajow_v10_0_e import TkodKraju
     from xsdata.models.datatype import XmlDate, XmlDateTime
+    from xsdata_pydantic.bindings import XmlSerializer
     _ksef2_available = True
 except ImportError:
     logger.warning("ksef2 SDK not installed — KSeF integration disabled")
@@ -273,7 +274,7 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     Build FA(3) and submit to KSeF production.
 
     Returns:
-        dict with ksef_reference_number, ksef_status, etc.
+        dict with ksef_number, ksef_status, reference_number, etc.
     """
     if not _ksef2_available:
         raise RuntimeError("ksef2 SDK not installed — run: pip install ksef2")
@@ -287,12 +288,7 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     faktura = build_faktura(invoice, client)
 
     # Serialize to XML bytes
-    from xsdata.formats.dataclass.serializer import XmlSerializer
-    from xsdata.formats.dataclass.context import XmlContext
-    import io
-
-    context = XmlContext()
-    serializer = XmlSerializer(context=context)
+    serializer = XmlSerializer()
     xml_str = serializer.render(faktura)
     xml_bytes = xml_str.encode("utf-8")
 
@@ -305,14 +301,16 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     with auth.online_session(form_code=FormSchema.FA3) as session:
         result = session.send_invoice_and_wait(invoice_xml=xml_bytes)
 
-    ksef_number = getattr(result, "ksef_reference_number", None) or getattr(result, "reference_number", None)
-    status = getattr(result, "status", "submitted")
-
-    logger.info(f"KSeF submission complete: {ksef_number} (status: {status})")
+    logger.info(
+        f"KSeF submission complete: ksef_number={result.ksef_number}, "
+        f"reference={result.reference_number}, status={result.status.description}"
+    )
 
     return {
-        "ksef_reference_number": str(ksef_number) if ksef_number else None,
-        "ksef_status": str(status),
+        "ksef_number": result.ksef_number,
+        "reference_number": result.reference_number,
+        "ksef_status": result.status.description,
+        "ksef_status_code": result.status.code,
         "invoice_number": invoice["invoice_number"],
         "submitted_at": datetime.now().isoformat(),
     }
