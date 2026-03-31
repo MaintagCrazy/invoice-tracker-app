@@ -1,29 +1,28 @@
 # FastAPI
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
 
 # Google Sheets (database)
-gspread==6.0.0
-google-auth==2.27.0
+gspread>=6.0.0
+google-auth>=2.27.0
 
-# PDF Generation
-weasyprint==60.2
-pydyf<0.11.0
+# PDF Generation (ksef2 requires weasyprint>=63.0)
+weasyprint>=63.0
 
-# HTTP Client (for OpenRouter)
-httpx==0.26.0
+# HTTP Client (ksef2 requires httpx>=0.28.1)
+httpx[http2]>=0.28.1
 
 # Google APIs (Gmail + Drive)
-google-api-python-client==2.116.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.0
+google-api-python-client>=2.116.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
 
-# Pydantic
-pydantic==2.5.3
+# Pydantic (ksef2 requires >=2.12.5)
+pydantic>=2.12.5
 
 # Utils
-python-dotenv==1.0.0
+python-dotenv>=1.0.0
 
 # EFB 223 Generator
 anthropic>=0.40.0
