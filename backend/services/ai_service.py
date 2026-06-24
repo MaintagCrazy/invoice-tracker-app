@@ -384,6 +384,29 @@ class AIService:
 
         return "Please confirm this action."
 
+    @staticmethod
+    def _http_error_message(status: int) -> str:
+        """Turn an OpenRouter HTTP status into an actionable user-facing message.
+
+        A dead/invalid key or empty balance is a configuration problem, not a
+        transient glitch — retrying never fixes it, so say so plainly instead of
+        telling the user to 'try again'.
+        """
+        if status in (401, 403):
+            return (
+                "⚠️ The AI assistant's access key is invalid or expired, so it can't run right now. "
+                "This is a setup issue, not a temporary glitch — retrying won't help. "
+                "The OpenRouter API key needs to be replaced."
+            )
+        if status == 402:
+            return (
+                "⚠️ The AI assistant is out of credits. Please top up the OpenRouter account "
+                "to keep creating invoices via chat."
+            )
+        if status == 429:
+            return "The AI assistant is busy (rate limited). Please wait a few seconds and try again."
+        return "Sorry, I'm having trouble connecting to the AI service. Please try again."
+
     async def chat(
         self,
         message: str,
@@ -528,10 +551,23 @@ class AIService:
                 "needs_confirmation": False,
             }
 
-        except httpx.HTTPError as e:
-            logger.error(f"OpenRouter API error: {e}")
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            try:
+                body = e.response.text[:500]
+            except Exception:
+                body = ""
+            logger.error(f"OpenRouter HTTP {status} error: {body}")
             return {
-                "response": "Sorry, I'm having trouble connecting to the AI service. Please try again.",
+                "response": self._http_error_message(status),
+                "conversation_id": conversation_id,
+                "extracted_data": None,
+                "needs_confirmation": False,
+            }
+        except httpx.HTTPError as e:
+            logger.error(f"OpenRouter connection error: {type(e).__name__}: {e}")
+            return {
+                "response": "Sorry, I'm having trouble reaching the AI service right now. Please try again in a moment.",
                 "conversation_id": conversation_id,
                 "extracted_data": None,
                 "needs_confirmation": False,

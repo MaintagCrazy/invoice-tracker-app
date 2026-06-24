@@ -26,7 +26,7 @@ class Config:
     USER_EMAIL: str = os.environ.get("USER_EMAIL", "")
 
     # OpenRouter Settings
-    AI_MODEL: str = "google/gemini-2.0-flash-001"
+    AI_MODEL: str = os.environ.get("AI_MODEL", "google/gemini-2.5-flash")
     AI_BASE_URL: str = "https://openrouter.ai/api/v1"
 
     # Google Sheets for migration
