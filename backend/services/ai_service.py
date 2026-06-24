@@ -403,6 +403,12 @@ class AIService:
                 "⚠️ The AI assistant is out of credits. Please top up the OpenRouter account "
                 "to keep creating invoices via chat."
             )
+        if status == 404:
+            return (
+                "⚠️ The AI model this assistant uses is no longer available and needs to be updated "
+                "(set the AI_MODEL config to a current model). This is a setup issue, not a temporary "
+                "glitch — retrying won't help."
+            )
         if status == 429:
             return "The AI assistant is busy (rate limited). Please wait a few seconds and try again."
         return "Sorry, I'm having trouble connecting to the AI service. Please try again."
@@ -634,8 +640,16 @@ class AIService:
             self._add_to_conversation(conversation_id, assistant_message)
             return assistant_message.get("content", "") or result_content
 
+        except httpx.HTTPStatusError as e:
+            body = ""
+            try:
+                body = e.response.text[:500]
+            except Exception:
+                pass
+            logger.error(f"OpenRouter HTTP {e.response.status_code} error (tool result): {body}")
+            return result_content
         except Exception as e:
-            logger.error(f"Error sending tool result: {e}")
+            logger.error(f"Error sending tool result: {type(e).__name__}: {e}")
             return result_content
 
     def clear_conversation(self, conversation_id: str):
