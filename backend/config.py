@@ -2,7 +2,7 @@
 Configuration for Invoice Tracker App
 """
 import os
-from typing import Optional
+from typing import Optional, List
 
 
 class Config:
@@ -26,7 +26,19 @@ class Config:
     USER_EMAIL: str = os.environ.get("USER_EMAIL", "")
 
     # OpenRouter Settings
-    AI_MODEL: str = os.environ.get("AI_MODEL", "google/gemini-2.5-flash")
+    # Ordered fallback chain of flash models, newest first. The AI service tries
+    # each in order and falls through to the next ONLY when a model is retired /
+    # unavailable (OpenRouter 404). Override the whole chain with AI_MODELS
+    # ("a,b,c"), or pin a single primary with AI_MODEL. All entries below are
+    # verified to support OpenRouter tool/function calling.
+    _DEFAULT_AI_MODELS = "google/gemini-3.5-flash,google/gemini-2.5-flash,google/gemini-2.5-flash-lite"
+    AI_MODELS: List[str] = [
+        m.strip()
+        for m in (os.environ.get("AI_MODELS") or os.environ.get("AI_MODEL") or _DEFAULT_AI_MODELS).split(",")
+        if m.strip()
+    ]
+    # Back-compat: anything still reading config.AI_MODEL gets the primary model.
+    AI_MODEL: str = AI_MODELS[0] if AI_MODELS else "google/gemini-2.5-flash"
     AI_BASE_URL: str = "https://openrouter.ai/api/v1"
 
     # Google Sheets for migration

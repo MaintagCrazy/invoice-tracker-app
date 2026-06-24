@@ -284,7 +284,9 @@ class AIService:
 
     def __init__(self):
         self.api_key = config.OPENROUTER_API_KEY
-        self.model = config.AI_MODEL
+        # Ordered fallback chain of models, newest first (see config.AI_MODELS).
+        self.models = list(config.AI_MODELS) or [config.AI_MODEL]
+        self.model = self.models[0]  # primary, for logging/back-compat
         self.base_url = config.AI_BASE_URL
         self.conversations: Dict[str, list] = {}
         self.conversation_ts: Dict[str, float] = {}  # last activity timestamp
@@ -413,6 +415,59 @@ class AIService:
             return "The AI assistant is busy (rate limited). Please wait a few seconds and try again."
         return "Sorry, I'm having trouble connecting to the AI service. Please try again."
 
+    async def _post_completion(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """POST a chat completion to OpenRouter, trying each model in self.models.
+
+        Falls through to the next model ONLY on HTTP 404 (model retired/
+        unavailable). Auth (401/403), billing (402), rate-limit (429) and 5xx
+        errors are NOT retried across models — switching the model wouldn't help —
+        so they propagate immediately to the caller's error handler.
+
+        Returns the parsed JSON response on success; raises the underlying
+        httpx error if every model fails.
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://invoice-tracker.railway.app",
+            "X-Title": "Invoice Tracker App",
+        }
+        last_error: Optional[httpx.HTTPStatusError] = None
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for i, model in enumerate(self.models):
+                try:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=headers,
+                        json={
+                            "model": model,
+                            "messages": messages,
+                            "tools": FUNCTION_TOOLS,
+                            "tool_choice": "auto",
+                            "temperature": 0.4,
+                            "max_tokens": 1500,
+                        },
+                    )
+                    response.raise_for_status()
+                    if i > 0:
+                        logger.warning(
+                            f"AI model fallback: '{model}' used after {i} unavailable model(s)"
+                        )
+                    return response.json()
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404 and i < len(self.models) - 1:
+                        logger.warning(
+                            f"AI model '{model}' unavailable (404 — likely retired); "
+                            f"falling back to '{self.models[i + 1]}'"
+                        )
+                        last_error = e
+                        continue
+                    raise
+        if last_error is not None:
+            raise last_error
+        # self.models was empty — should never happen given __init__ guard.
+        raise RuntimeError("No AI models configured")
+
     async def chat(
         self,
         message: str,
@@ -449,26 +504,7 @@ class AIService:
         messages = [{"role": "system", "content": system_prompt}] + history
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://invoice-tracker.railway.app",
-                        "X-Title": "Invoice Tracker App"
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "tools": FUNCTION_TOOLS,
-                        "tool_choice": "auto",
-                        "temperature": 0.4,
-                        "max_tokens": 1500
-                    }
-                )
-                response.raise_for_status()
-                result = response.json()
+            result = await self._post_completion(messages)
 
             choice = result["choices"][0]
             assistant_message = choice["message"]
@@ -615,26 +651,7 @@ class AIService:
         messages = [{"role": "system", "content": system_prompt}] + history
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://invoice-tracker.railway.app",
-                        "X-Title": "Invoice Tracker App"
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "tools": FUNCTION_TOOLS,
-                        "tool_choice": "auto",
-                        "temperature": 0.4,
-                        "max_tokens": 1500
-                    }
-                )
-                response.raise_for_status()
-                result = response.json()
+            result = await self._post_completion(messages)
 
             assistant_message = result["choices"][0]["message"]
             self._add_to_conversation(conversation_id, assistant_message)
