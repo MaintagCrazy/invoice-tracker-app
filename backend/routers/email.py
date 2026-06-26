@@ -123,15 +123,25 @@ def send_invoice_sync(
     )
     sent = sum(1 for r in results if r.get("success"))
     failed = sum(1 for r in results if not r.get("success"))
+    succeeded = [r.get("recipient") for r in results if r.get("success")]
     if sent:
         db.update_invoice_status(invoice_id, "sent")
 
     logger.info(f"[chat] Invoice {invoice_id} email: {sent} sent, {failed} failed")
-    return {
-        "sent": sent,
-        "failed": failed,
-        "recipients": [r.get("recipient") for r in results if r.get("success")],
-    }
+
+    # Audit trail (parity with the dashboard send path)
+    try:
+        from services.audit_service import get_audit_service
+        get_audit_service().log_action(
+            action="email_sent" if sent > 0 else "email_send_failed",
+            entity_type="invoice",
+            entity_id=str(invoice_id),
+            details={"recipients": succeeded, "success": sent, "failed": failed, "source": "chat"},
+        )
+    except Exception:
+        pass
+
+    return {"sent": sent, "failed": failed, "recipients": succeeded}
 
 
 @router.post("/{invoice_id}/send")

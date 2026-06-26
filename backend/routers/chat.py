@@ -219,6 +219,33 @@ async def chat(message: ChatMessage):
             needs_confirmation=False
         )
 
+    # Enrich the email-send confirmation with real invoice details so the user can
+    # verify exactly WHAT and to WHOM before confirming an irreversible, customer-facing
+    # send (catches a wrong invoice/client resolution by the model).
+    extracted = result.get("extracted_data") or {}
+    if result.get("needs_confirmation") and extracted.get("action_type") == "send_invoice_email":
+        try:
+            inv = db.get_invoice(int(extracted.get("invoice_id")))
+        except (ValueError, TypeError):
+            inv = None
+        if inv:
+            from config import config as _cfg
+            client = inv.get("client", {})
+            client_email = client.get("email")
+            lines = [
+                f"I'll email invoice **{inv.get('invoice_number', '?')}** (file #{inv.get('file_number', '?')}) to:",
+                f"- **{client.get('name', 'the client')}** — {client_email or '⚠️ no email on file (client will be skipped)'}",
+            ]
+            for tax_email in _cfg.TAX_ACCOUNTANT_EMAILS:
+                lines.append(f"- {tax_email} (tax accountant — always copied)")
+            for r in (extracted.get("additional_recipients") or []):
+                lines.append(f"- {r}")
+            lines.append("")
+            lines.append(f"Invoice: {inv.get('description', '')} — {inv.get('currency', 'EUR')} {float(inv.get('amount', 0)):,.2f}")
+            lines.append("")
+            lines.append("This sends a real email and can't be undone. Please confirm.")
+            result["response"] = "\n".join(lines)
+
     # Normal response (conversational or write needing confirmation)
     return ChatResponse(
         response=result.get("response", ""),

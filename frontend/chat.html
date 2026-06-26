@@ -835,20 +835,29 @@
                 closeConfirmModal();
 
                 if (result && result.success) {
-                    // Store for undo
-                    lastCreatedAction = {
-                        type: result.action_type,
-                        id: result.invoice_id || result.payment_id || result.client_id,
-                        data: result
-                    };
-
-                    // Show undo toast
-                    showUndoToast(result.message || 'Action completed successfully!');
-
-                    // Add success message to chat
-                    addMessage(result.message || 'Done!');
+                    // Email sends can't be undone — skip the undo toast for them
+                    if (result.action_type === 'send_invoice_email') {
+                        addMessage(result.message || 'Email sent!');
+                    } else {
+                        // Store for undo
+                        lastCreatedAction = {
+                            type: result.action_type,
+                            id: result.invoice_id || result.payment_id || result.client_id,
+                            data: result
+                        };
+                        showUndoToast(result.message || 'Action completed successfully!');
+                        addMessage(result.message || 'Done!');
+                    }
 
                     // Reset conversation
+                    conversationId = null;
+                    localStorage.removeItem('invoice_tracker_session');
+                    extractedData = null;
+                    currentActionType = null;
+                } else if (result && result.message) {
+                    // Honest failure: server returned success:false with HTTP 200
+                    // (e.g. the email send failed). Surface it instead of closing silently.
+                    addMessage(result.message);
                     conversationId = null;
                     localStorage.removeItem('invoice_tracker_session');
                     extractedData = null;
