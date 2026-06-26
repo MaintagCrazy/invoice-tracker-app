@@ -348,6 +348,34 @@ async def confirm_action(conversation_id: str):
                 "message": f"Invoice #{invoice_id} moved to trash. You can restore it within 30 days."
             }
 
+        elif function_name == "send_invoice_email":
+            from routers.email import send_invoice_sync
+            invoice_id = int(args["invoice_id"])
+            result = send_invoice_sync(
+                invoice_id=invoice_id,
+                additional_recipients=args.get("additional_recipients"),
+                custom_message=args.get("custom_message"),
+            )
+            ai_service.clear_conversation(conversation_id)
+            sent, failed = result["sent"], result["failed"]
+            recips = ", ".join(result["recipients"]) if result["recipients"] else "no one"
+            if sent == 0:
+                return {
+                    "success": False,
+                    "action_type": "send_invoice_email",
+                    "invoice_id": invoice_id,
+                    "message": f"Could not send invoice #{invoice_id} — all {failed} send attempt(s) failed. The email service may need attention.",
+                }
+            msg = f"Invoice #{invoice_id} emailed to {sent} recipient(s): {recips}."
+            if failed:
+                msg += f" ({failed} failed.)"
+            return {
+                "success": True,
+                "action_type": "send_invoice_email",
+                "invoice_id": invoice_id,
+                "message": msg,
+            }
+
         else:
             raise HTTPException(status_code=400, detail=f"Unknown action: {function_name}")
 

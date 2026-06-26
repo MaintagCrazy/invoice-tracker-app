@@ -72,6 +72,68 @@ def _send_invoice_background(
             pass
 
 
+def send_invoice_sync(
+    invoice_id: int,
+    additional_recipients: list | None = None,
+    custom_subject: str | None = None,
+    custom_message: str | None = None,
+) -> dict:
+    """Synchronously generate an invoice PDF and email it to the client + tax accountants.
+
+    Shared by the chat agent's send_invoice_email tool (the dashboard endpoint below
+    uses a background task). Raises ValueError if the invoice doesn't exist.
+    Returns {"sent": int, "failed": int, "recipients": [emails that succeeded]}.
+    """
+    db = get_sheets_db()
+    pdf_service = get_pdf_service()
+    email_service = get_email_service()
+
+    invoice = db.get_invoice(invoice_id)
+    if not invoice:
+        raise ValueError(f"Invoice #{invoice_id} not found")
+
+    invoice_data = {
+        "invoice_number": invoice["invoice_number"],
+        "file_number": invoice["file_number"],
+        "description": invoice["description"],
+        "amount": invoice["amount"],
+        "currency": invoice["currency"],
+        "issue_date": invoice["issue_date"],
+        "due_date": invoice["due_date"],
+    }
+    client = invoice.get("client", {})
+    pdf_bytes = pdf_service.generate_pdf_bytes(invoice_data, {
+        "name": client.get("name", ""),
+        "address": client.get("address", ""),
+        "company_id": client.get("company_id", ""),
+    })
+
+    recipients = []
+    if client.get("email"):
+        recipients.append(client["email"])
+    if additional_recipients:
+        recipients.extend(additional_recipients)
+
+    results = email_service.send_invoice(
+        invoice_data=invoice_data,
+        pdf_bytes=pdf_bytes,
+        recipients=recipients,
+        custom_subject=custom_subject,
+        custom_body=custom_message,
+    )
+    sent = sum(1 for r in results if r.get("success"))
+    failed = sum(1 for r in results if not r.get("success"))
+    if sent:
+        db.update_invoice_status(invoice_id, "sent")
+
+    logger.info(f"[chat] Invoice {invoice_id} email: {sent} sent, {failed} failed")
+    return {
+        "sent": sent,
+        "failed": failed,
+        "recipients": [r.get("recipient") for r in results if r.get("success")],
+    }
+
+
 @router.post("/{invoice_id}/send")
 async def send_invoice(
     invoice_id: int,

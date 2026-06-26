@@ -226,11 +226,37 @@ FUNCTION_TOOLS = [
                 "required": ["invoice_id"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_invoice_email",
+            "description": "Email an invoice (PDF attached) to the client and the tax accountants. Use whenever the user asks to send, email, forward, or mail an invoice (e.g. 'send invoice 41', 'email the Bauceram invoice to the client'). The invoice is identified by its file number (invoice_id) — look it up first if the user gives an invoice number like 01/06/2026 or refers to a client/'the last invoice'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "invoice_id": {
+                        "type": "integer",
+                        "description": "The invoice file number to send"
+                    },
+                    "additional_recipients": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional extra email addresses to send to, beyond the client and the tax accountants (who always receive a copy)"
+                    },
+                    "custom_message": {
+                        "type": "string",
+                        "description": "Optional custom email body to use instead of the default template"
+                    }
+                },
+                "required": ["invoice_id"]
+            }
+        }
     }
 ]
 
 # Write operations need user confirmation before executing
-WRITE_OPERATIONS = {"create_invoice", "record_payment", "add_client", "edit_invoice", "delete_invoice"}
+WRITE_OPERATIONS = {"create_invoice", "record_payment", "add_client", "edit_invoice", "delete_invoice", "send_invoice_email"}
 # Read operations execute immediately
 READ_OPERATIONS = {"list_clients", "query_data", "get_invoice_pdf"}
 
@@ -275,7 +301,14 @@ SYSTEM_PROMPT = """You are the AI assistant for C.D. Grupa Budowlana's invoice t
 - List clients ("show my clients")
 - Check balances ("what does [client] owe?")
 - Get invoice PDFs ("show me invoice 15")
+- Email/send invoices ("send invoice 15", "email the Bauceram invoice to the client")
 - Tip: Descriptions default to German. Type naturally in English, German, or Polish.
+
+## SENDING INVOICES BY EMAIL:
+- When the user asks to send, email, forward, or mail an invoice, use the send_invoice_email tool with the invoice's file number.
+- If they reference an invoice number (XX/MM/YYYY), a client, or "the last/that invoice", resolve it to the file number first (use query_data or the previous context), then call send_invoice_email.
+- Every invoice email ALWAYS goes to the client's email on file AND the company tax accountants (this is required for bookkeeping). The user will see the full recipient list to confirm before anything is sent.
+- NEVER claim you cannot send emails — you can, via send_invoice_email.
 """
 
 
@@ -382,6 +415,17 @@ class AIService:
         elif function_name == "delete_invoice":
             msg = f"Are you sure you want to delete invoice **#{args.get('invoice_id', '?')}**?\n\n"
             msg += "The invoice will be moved to trash and can be restored within 30 days. After that, it will be permanently deleted."
+            return msg
+
+        elif function_name == "send_invoice_email":
+            msg = f"I'll email invoice **#{args.get('invoice_id', '?')}** (PDF attached) to:\n"
+            msg += "- The client's email on file\n"
+            for tax_email in config.TAX_ACCOUNTANT_EMAILS:
+                msg += f"- {tax_email} (tax accountant — always copied)\n"
+            if args.get("additional_recipients"):
+                for r in args["additional_recipients"]:
+                    msg += f"- {r}\n"
+            msg += "\nThis sends a real email and can't be undone. Please confirm."
             return msg
 
         return "Please confirm this action."
@@ -531,6 +575,7 @@ class AIService:
                     "add_client": ["client_name"],
                     "edit_invoice": ["invoice_id"],
                     "delete_invoice": ["invoice_id"],
+                    "send_invoice_email": ["invoice_id"],
                 }
                 if function_name in required_args:
                     missing = [a for a in required_args[function_name] if a not in function_args]
@@ -553,7 +598,8 @@ class AIService:
                         "record_payment": "payment",
                         "add_client": "add_client",
                         "edit_invoice": "edit_invoice",
-                        "delete_invoice": "delete_invoice"
+                        "delete_invoice": "delete_invoice",
+                        "send_invoice_email": "send_invoice_email"
                     }
 
                     extracted_data = {**function_args, "action_type": action_type_map.get(function_name, function_name)}

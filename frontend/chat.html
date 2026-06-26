@@ -623,6 +623,14 @@
 
                 // Load invoice details to show what's being deleted
                 loadDeleteInvoiceInfo(data.invoice_id);
+
+            } else if (actionType === 'send_invoice_email') {
+                title.textContent = 'Send Invoice by Email';
+                icon.className = 'w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center';
+                icon.innerHTML = '<i class="fas fa-paper-plane text-blue-600 text-xl"></i>';
+                confirmCreateBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Send Email';
+                // No form fields — the recipient list is shown in the chat message above;
+                // confirming triggers the server-side pending action (send_invoice_email).
             }
 
             confirmModal.classList.remove('hidden');
@@ -810,6 +818,17 @@
                         result.message = result.message || `Invoice #${invoiceId} moved to trash. You can restore it within 30 days.`;
                     } else {
                         throw new Error(result.detail || 'Failed to delete invoice');
+                    }
+
+                } else if (currentActionType === 'send_invoice_email') {
+                    // Use the server-side pending-action confirm flow (same as edit_invoice)
+                    const resp = await fetch(`${API_BASE}/api/chat/confirm?conversation_id=${conversationId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    result = await resp.json();
+                    if (!resp.ok) {
+                        throw new Error(result.detail || 'Failed to send invoice email');
                     }
                 }
 
