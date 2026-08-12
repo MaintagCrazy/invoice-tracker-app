@@ -316,6 +316,16 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     }
 
 
+def _ksef2_version() -> str:
+    """Installed ksef2 version — surfaced in health so an SDK bump that changes
+    the API is diagnosable from the response instead of a guess."""
+    try:
+        from importlib.metadata import version
+        return version("ksef2")
+    except Exception:
+        return "unknown"
+
+
 def check_ksef_health() -> dict:
     """Check KSeF API connectivity and token validity."""
     if not _ksef2_available:
@@ -325,19 +335,52 @@ def check_ksef_health() -> dict:
     if not token:
         return {"available": False, "error": "KSEF_TOKEN not configured"}
 
+    env_name = config.KSEF_ENVIRONMENT
+    nip = config.COMPANY["nip"]
     try:
-        env = Environment.PRODUCTION if config.KSEF_ENVIRONMENT == "production" else Environment.TEST
+        env = Environment.PRODUCTION if env_name == "production" else Environment.TEST
         ksef_client = KsefClient(env)
 
-        # Check public endpoint
-        certs = ksef_client.encryption.get_public_key_certificates()
+        # Connectivity probe against a public endpoint (reads only). The SDK
+        # renamed this between releases and the pin is a floor, not an exact
+        # version — accept either name so a library bump degrades loudly at
+        # worst, instead of reporting KSeF dead when it is reachable.
+        enc = ksef_client.encryption
+        probe = getattr(enc, "get_certificates", None) or getattr(enc, "get_public_key_certificates", None)
+        if probe is None:
+            raise RuntimeError(
+                "ksef2 SDK exposes no known certificate endpoint "
+                f"(installed {_ksef2_version()}); the SDK API changed."
+            )
+        certs = probe()
+
+        # Whether the token still works is the question that actually matters,
+        # and connectivity alone never answered it. Authenticating is read-only —
+        # it issues a session token and files nothing.
+        token_valid, token_error = None, None
+        try:
+            ksef_client.authentication.with_token(ksef_token=token, nip=nip)
+            token_valid = True
+        except Exception as auth_err:
+            token_valid = False
+            token_error = str(auth_err)
+            logger.warning(f"KSeF token failed validation: {auth_err}")
 
         return {
             "available": True,
-            "environment": config.KSEF_ENVIRONMENT,
-            "nip": config.COMPANY["nip"],
+            "environment": env_name,
+            "nip": nip,
             "certificates": len(certs) if certs else 0,
+            "sdk_version": _ksef2_version(),
             "token_configured": True,
+            "token_valid": token_valid,
+            "token_error": token_error,
         }
     except Exception as e:
-        return {"available": False, "error": str(e)}
+        return {
+            "available": False,
+            "environment": env_name,
+            "sdk_version": _ksef2_version(),
+            "token_configured": True,
+            "error": str(e),
+        }
