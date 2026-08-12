@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
-from routers import invoices_router, clients_router, chat_router, email_router, payments_router, sync_router, efb223_router, ksef_router
+from routers import invoices_router, clients_router, chat_router, email_router, payments_router, sync_router, zus_router, efb223_router, ksef_router
 from config import config
 
 # Configure logging
@@ -61,6 +61,7 @@ app.include_router(chat_router)
 app.include_router(email_router)
 app.include_router(payments_router)
 app.include_router(sync_router)
+app.include_router(zus_router)
 
 # EFB 223 router - only include if deps are available
 if efb223_router is not None:

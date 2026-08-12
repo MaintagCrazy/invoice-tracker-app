@@ -11,8 +11,10 @@ let payments = [];
 let currentInvoiceId = null;
 let currentClientId = null;
 let currentClientFilter = null; // client name being filtered
-let currentView = 'invoices'; // 'invoices' or 'payments'
+let currentView = 'invoices'; // 'invoices', 'payments', 'zus' or 'drive'
 let exchangeRate = null; // EUR->PLN rate from NBP
+let zusMonths = [];      // ZUS rows from the API, newest first
+let zusWindow = 12;      // how many months back the ZUS list is showing
 
 // DOM Elements
 const filterStatus = document.getElementById('filter-status');
@@ -66,32 +68,51 @@ const isMobile = () => window.innerWidth < 768;
 
 // ============ VIEW SWITCHING ============
 
+const VIEW_BTN_ACTIVE = 'px-4 py-2 bg-blue-600 text-white rounded-lg font-medium';
+const VIEW_BTN_IDLE = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
+
+// Show one desktop view, hide the rest, and highlight the matching toggle button
+function setDesktopView(view) {
+    currentView = view;
+
+    const views = {
+        invoices: 'invoices-view',
+        payments: 'payments-view',
+        zus: 'zus-view',
+        drive: 'drive-files-view'
+    };
+    Object.entries(views).forEach(([name, id]) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', name !== view);
+    });
+
+    const buttons = {
+        invoices: 'view-invoices-btn',
+        payments: 'view-payments-btn',
+        zus: 'view-zus-btn'
+    };
+    Object.entries(buttons).forEach(([name, id]) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.className = (name === view) ? VIEW_BTN_ACTIVE : VIEW_BTN_IDLE;
+    });
+}
+
 function showInvoicesView() {
-    currentView = 'invoices';
-    document.getElementById('invoices-view').classList.remove('hidden');
-    document.getElementById('payments-view').classList.add('hidden');
-    document.getElementById('drive-files-view').classList.add('hidden');
-    document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-blue-600 text-white rounded-lg font-medium';
-    document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
+    setDesktopView('invoices');
 }
 
 function showPaymentsView() {
-    currentView = 'payments';
-    document.getElementById('invoices-view').classList.add('hidden');
-    document.getElementById('payments-view').classList.remove('hidden');
-    document.getElementById('drive-files-view').classList.add('hidden');
-    document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
-    document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-blue-600 text-white rounded-lg font-medium';
+    setDesktopView('payments');
     loadPayments();
 }
 
+function showZusView() {
+    setDesktopView('zus');
+    loadZus();
+}
+
 function showDriveView() {
-    currentView = 'drive';
-    document.getElementById('invoices-view').classList.add('hidden');
-    document.getElementById('payments-view').classList.add('hidden');
-    document.getElementById('drive-files-view').classList.remove('hidden');
-    document.getElementById('view-invoices-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
-    document.getElementById('view-payments-btn').className = 'px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50';
+    setDesktopView('drive');
     loadDriveFiles();
 }
 
@@ -111,13 +132,19 @@ function mobileNav(view) {
     const mPay = document.getElementById('mobile-payments-view');
     const mCli = document.getElementById('mobile-clients-view');
     const mDrv = document.getElementById('mobile-drive-view');
+    const mZus = document.getElementById('mobile-zus-view');
 
     mInv.classList.add('hidden');
     mPay.classList.add('hidden');
     mCli.classList.add('hidden');
     mDrv.classList.add('hidden');
+    if (mZus) mZus.classList.add('hidden');
 
-    if (view === 'invoices') {
+    if (view === 'zus') {
+        if (mZus) mZus.classList.remove('hidden');
+        document.querySelector('.mobile-only.bg-white.border-b span').textContent = 'ZUS';
+        loadZus();
+    } else if (view === 'invoices') {
         mInv.classList.remove('hidden');
         document.querySelector('.mobile-only.bg-white.border-b span').textContent = 'Invoices';
     } else if (view === 'payments') {
@@ -427,6 +454,122 @@ function renderPayments() {
             <td class="px-4 py-3 text-gray-500">${p.notes || '-'}</td>
         </tr>
     `).join('');
+}
+
+// ============ ZUS (monthly social-security contribution) ============
+
+async function loadZus() {
+    try {
+        const response = await fetch(`${API_BASE}/api/zus/?months=${zusWindow}`);
+        const data = await response.json();
+        zusMonths = data.months || [];
+        renderZus(data);
+        renderMobileZus();
+    } catch (error) {
+        console.error('Error loading ZUS payments:', error);
+        const table = document.getElementById('zus-table');
+        if (table) table.innerHTML = '<tr><td colspan="4" class="px-4 py-4 text-center text-red-500">Error loading ZUS payments</td></tr>';
+        const list = document.getElementById('mobile-zus-list');
+        if (list) list.innerHTML = '<div class="px-4 py-8 text-center text-red-500">Error loading ZUS payments</div>';
+    }
+}
+
+function loadMoreZusMonths() {
+    zusWindow += 12;
+    loadZus();
+}
+
+// The fixed base rate, plus a FLAG (never a calculated figure) when invoices
+// were issued that month — the real ZUS is then usually higher, but we have no
+// formula for it, so we only ever state the invoice count we read from the DB.
+function zusAmountHtml(m) {
+    const amount = formatCurrency(m.base_amount, m.currency);
+    if (!m.likely_higher) return amount;
+
+    const label = m.invoice_count === 1 ? 'invoice' : 'invoices';
+    const title = (m.invoice_numbers || []).join(', ');
+    return `${amount} <span class="text-amber-600 text-xs" title="${title}">(likely higher — ${m.invoice_count} ${label} issued this month)</span>`;
+}
+
+function zusToggleButton(m) {
+    return m.paid
+        ? `<button onclick="toggleZusPaid('${m.month}')" class="px-3 py-1.5 rounded-lg bg-green-100 text-green-700 text-sm font-medium hover:bg-green-200" title="Click to un-mark">
+               <i class="fas fa-check-circle mr-1"></i>Paid
+           </button>`
+        : `<button onclick="toggleZusPaid('${m.month}')" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-sm font-medium hover:bg-gray-50">
+               <i class="far fa-square mr-1"></i>Mark paid
+           </button>`;
+}
+
+function renderZus(data) {
+    const table = document.getElementById('zus-table');
+    const summary = document.getElementById('zus-summary');
+    if (!table) return;
+
+    if (summary && data) {
+        summary.textContent = `${data.paid_count} paid · ${data.unpaid_count} outstanding`;
+    }
+
+    if (zusMonths.length === 0) {
+        table.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">No months to show</td></tr>';
+        return;
+    }
+
+    table.innerHTML = zusMonths.map(m => `
+        <tr class="hover:bg-gray-50 ${m.paid ? 'bg-gray-50' : ''}">
+            <td class="px-4 py-3 whitespace-nowrap font-medium ${m.paid ? 'text-gray-500' : 'text-gray-900'}">${m.label}</td>
+            <td class="px-4 py-3 text-sm ${m.paid ? 'text-gray-500' : 'text-gray-900'}">${zusAmountHtml(m)}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm">
+                ${m.paid
+                    ? `<span class="text-green-600 font-medium">Paid</span>${m.paid_at ? `<span class="text-gray-400 text-xs block">${formatDate(m.paid_at)}</span>` : ''}`
+                    : '<span class="text-gray-400">Not paid</span>'
+                }
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-right">${zusToggleButton(m)}</td>
+        </tr>
+    `).join('');
+}
+
+function renderMobileZus() {
+    const list = document.getElementById('mobile-zus-list');
+    if (!list) return;
+
+    if (zusMonths.length === 0) {
+        list.innerHTML = '<div class="px-4 py-8 text-center text-gray-400">No months to show</div>';
+        return;
+    }
+
+    list.innerHTML = zusMonths.map(m => `
+        <div class="px-4 py-3 flex items-center justify-between ${m.paid ? 'bg-gray-50' : ''}">
+            <div style="min-width:0; flex:1">
+                <div class="font-medium text-sm ${m.paid ? 'text-gray-500' : 'text-gray-900'}">${m.label}</div>
+                <div class="text-xs ${m.paid ? 'text-gray-400' : 'text-gray-600'}">${zusAmountHtml(m)}</div>
+                ${m.paid && m.paid_at ? `<div class="text-xs text-gray-400">Paid ${formatDate(m.paid_at)}</div>` : ''}
+            </div>
+            <div class="flex-shrink-0 ml-3">${zusToggleButton(m)}</div>
+        </div>
+    `).join('');
+}
+
+async function toggleZusPaid(month) {
+    const entry = zusMonths.find(m => m.month === month);
+    if (!entry) return;
+
+    const action = entry.paid ? 'mark-unpaid' : 'mark-paid';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/zus/${month}/${action}`, { method: 'POST' });
+
+        if (response.ok) {
+            await loadZus();
+        } else {
+            const error = await response.json();
+            alert(`Error: ${error.detail || 'Failed to update ZUS month'}`);
+        }
+    } catch (error) {
+        console.error('Error updating ZUS month:', error);
+        alert('Error updating ZUS month. Please try again.');
+    }
 }
 
 // ============ CLIENT FILTER ============

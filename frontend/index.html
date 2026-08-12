@@ -82,6 +82,13 @@
         }
         .floating-nav button i, .floating-nav a.nav-btn i { font-size: 18px; }
 
+        /* Narrow phones: shrink the pill so all tabs stay on screen */
+        @media (max-width: 400px) {
+            .floating-nav { gap: 2px; padding: 5px 6px; }
+            .floating-nav button, .floating-nav a.nav-btn { width: 38px; height: 38px; }
+            .floating-nav button i, .floating-nav a.nav-btn i { font-size: 16px; }
+        }
+
         /* Mobile card */
         .invoice-card {
             padding: 14px 16px;
@@ -218,6 +225,7 @@
             <div class="flex items-center space-x-3">
                 <button id="view-invoices-btn" onclick="showInvoicesView()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium"><span data-lang-de>Rechnungen</span><span data-lang-en>Invoices</span></button>
                 <button id="view-payments-btn" onclick="showPaymentsView()" class="px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50"><span data-lang-de>Zahlungen</span><span data-lang-en>Payments</span></button>
+                <button id="view-zus-btn" onclick="showZusView()" class="px-4 py-2 bg-white text-gray-600 rounded-lg font-medium border hover:bg-gray-50">ZUS</button>
                 <span id="current-filter-label" class="text-gray-500 hidden">
                     | <span data-lang-de>Anzeige:</span><span data-lang-en>Showing:</span> <span id="filter-client-name" class="font-semibold text-blue-600"></span>
                 </span>
@@ -281,6 +289,37 @@
             </div>
         </div>
 
+        <!-- Desktop: ZUS Table View -->
+        <div id="zus-view" class="bg-white rounded-lg shadow hidden desktop-only">
+            <div class="px-4 py-3 border-b flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-landmark text-blue-500"></i>
+                    <span class="font-medium text-gray-900"><span data-lang-de>ZUS-Beiträge</span><span data-lang-en>ZUS Contributions</span></span>
+                </div>
+                <span id="zus-summary" class="text-sm text-gray-500"></span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-1/4"><span data-lang-de>Monat</span><span data-lang-en>Month</span></th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span data-lang-de>Betrag</span><span data-lang-en>Amount</span></th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-1/5">Status</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase w-1/6"></th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200" id="zus-table">
+                        <tr><td colspan="4" class="px-4 py-4 text-center text-gray-500"><span data-lang-de>Laden...</span><span data-lang-en>Loading...</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="px-4 py-3 border-t text-center">
+                <button onclick="loadMoreZusMonths()" class="text-sm text-blue-600 hover:underline">
+                    <i class="fas fa-chevron-down mr-1"></i><span data-lang-de>Frühere Monate anzeigen</span><span data-lang-en>Show earlier months</span>
+                </button>
+            </div>
+        </div>
+
         <!-- Mobile: Invoice Card List -->
         <div id="mobile-invoices-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4">
             <div id="mobile-invoice-list">
@@ -292,6 +331,18 @@
         <div id="mobile-payments-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
             <div id="mobile-payments-list">
                 <div class="px-4 py-8 text-center text-gray-400"><span data-lang-de>Laden...</span><span data-lang-en>Loading...</span></div>
+            </div>
+        </div>
+
+        <!-- Mobile: ZUS Card List -->
+        <div id="mobile-zus-view" class="mobile-only bg-white rounded-xl shadow-sm -mx-4 hidden">
+            <div id="mobile-zus-list" class="divide-y divide-gray-100">
+                <div class="px-4 py-8 text-center text-gray-400"><span data-lang-de>Laden...</span><span data-lang-en>Loading...</span></div>
+            </div>
+            <div class="px-4 py-3 border-t text-center">
+                <button onclick="loadMoreZusMonths()" class="text-sm text-blue-600">
+                    <i class="fas fa-chevron-down mr-1"></i><span data-lang-de>Frühere Monate anzeigen</span><span data-lang-en>Show earlier months</span>
+                </button>
             </div>
         </div>
 
@@ -345,6 +396,9 @@
         </button>
         <button id="mnav-payments" onclick="mobileNav('payments')">
             <i class="fas fa-coins"></i>
+        </button>
+        <button id="mnav-zus" onclick="mobileNav('zus')" title="ZUS">
+            <i class="fas fa-landmark"></i>
         </button>
         <button id="mnav-drive" onclick="mobileNav('drive')">
             <i class="fab fa-google-drive"></i>

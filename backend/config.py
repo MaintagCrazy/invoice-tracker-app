@@ -67,6 +67,17 @@ class Config:
     KSEF_TOKEN: str = os.environ.get("KSEF_TOKEN", "")
     KSEF_ENVIRONMENT: str = os.environ.get("KSEF_ENVIRONMENT", "production")
 
+    # ZUS (Polish monthly social-security contribution)
+    # Fixed base rate supplied by the CEO. THIS IS THE ONLY PLACE IT IS DEFINED —
+    # never hardcode the figure anywhere else. In months where invoices were
+    # issued the real ZUS is usually higher (the health part scales with income),
+    # but we have no formula for it: the UI flags those months, it never
+    # calculates or displays an estimated higher figure.
+    ZUS_BASE_AMOUNT_PLN: float = float(os.environ.get("ZUS_BASE_AMOUNT_PLN", "3500"))
+    ZUS_CURRENCY: str = "PLN"
+    # How many months back the ZUS tracker lists by default (newest first)
+    ZUS_DEFAULT_MONTHS: int = 12
+
     @classmethod
     def is_production(cls) -> bool:
         """Check if running in production (Railway)"""

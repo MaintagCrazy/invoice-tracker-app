@@ -4,6 +4,7 @@ Direct read/write to Google Sheets - single source of truth.
 Includes in-memory caching to avoid Google API rate limits (60 reads/min).
 """
 import os
+import re
 import json
 import base64
 import logging
@@ -23,6 +24,53 @@ SHEET_ID = "1xETHFJZO29qJj_UlyTqB29CRyOp7UFi49oEOvmfd084"
 DATABASE_TAB = "Database"
 CLIENTS_TAB = "Clients"
 PAYMENTS_TAB = "Payments"
+ZUS_TAB = "ZUS"
+
+# "YYYY-MM" — the key format used for a ZUS month everywhere (sheet, API, UI)
+MONTH_KEY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+MONTH_NAMES = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+]
+
+
+def month_key(year: int, month: int) -> str:
+    """Build the canonical 'YYYY-MM' month key"""
+    return f"{year:04d}-{month:02d}"
+
+
+def month_label(key: str) -> str:
+    """Human label for a 'YYYY-MM' key, e.g. '2026-08' -> 'August 2026'"""
+    try:
+        year, month = key.split("-")
+        return f"{MONTH_NAMES[int(month) - 1]} {year}"
+    except (ValueError, IndexError):
+        return key
+
+
+def issue_date_month(date_str: Any) -> Optional[str]:
+    """Extract the 'YYYY-MM' month from an invoice issue date.
+
+    Handles the two formats present in the sheet ('DD.MM.YYYY' as written by
+    this app, 'YYYY-MM-DD' as a defensive fallback). Returns None when the
+    value cannot be parsed — some migrated rows literally contain 'NOT FOUND',
+    and a row we cannot date is simply not counted anywhere.
+    """
+    value = str(date_str or "").strip()
+    if not value:
+        return None
+    match = re.match(r"^(\d{1,2})[./](\d{1,2})[./](\d{4})$", value)
+    if match:
+        day, month, year = (int(g) for g in match.groups())
+    else:
+        match = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", value)
+        if not match:
+            return None
+        year, month, day = (int(g) for g in match.groups())
+    if not 1 <= month <= 12:
+        return None
+    return month_key(year, month)
 
 # Seed clients — written to Clients sheet on first run, then sheet is source of truth
 SEED_CLIENTS = [
@@ -104,6 +152,7 @@ class SheetsDatabaseService:
             self.db_worksheet = self.sheet.worksheet(DATABASE_TAB)
             self._init_payments_worksheet()
             self._init_clients_worksheet()
+            self._init_zus_worksheet()
             self._ensure_deleted_at_column()
             logger.info(f"Connected to Google Sheet: {SHEET_ID}")
 
@@ -136,6 +185,22 @@ class SheetsDatabaseService:
             ]
             self.payments_worksheet.append_row(headers)
             logger.info("Created Payments worksheet")
+
+    def _init_zus_worksheet(self):
+        """Initialize ZUS worksheet (create if not exists).
+
+        Purely additive: it only ever adds a new tab, and never reads from or
+        writes to the Database / Clients / Payments tabs.
+        """
+        try:
+            self.zus_worksheet = self.sheet.worksheet(ZUS_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            self.zus_worksheet = self.sheet.add_worksheet(
+                title=ZUS_TAB, rows=200, cols=6
+            )
+            headers = ["Month", "Paid", "Paid At", "Base Rate PLN", "Updated At"]
+            self.zus_worksheet.append_row(headers)
+            logger.info("Created ZUS worksheet")
 
     def _init_clients_worksheet(self):
         """Initialize Clients worksheet (create if not exists, seed if empty)"""
@@ -877,6 +942,165 @@ class SheetsDatabaseService:
         """Get unpaid or partially paid invoices for a client"""
         invoices = self.get_invoices(client_id=client_id)
         return [i for i in invoices if i['amount_due'] > 0]
+
+    # ============ ZUS (monthly social-security contribution) ============
+
+    def _load_zus_records(self) -> Dict[str, Dict]:
+        """Load ticked ZUS months from the ZUS sheet (cached), keyed by 'YYYY-MM'.
+
+        The sheet only stores months the user has touched; the month list itself
+        is generated from the calendar, so this is one small read per cache TTL.
+        """
+        cached = self._cache_get("zus")
+        if cached is not None:
+            return cached
+        try:
+            all_data = self.zus_worksheet.get_all_records()
+            records: Dict[str, Dict] = {}
+
+            for row in all_data:
+                month = str(row.get('Month', '')).strip()
+                if not MONTH_KEY_RE.match(month):
+                    continue
+
+                base_rate = None
+                raw_rate = row.get('Base Rate PLN')
+                if raw_rate not in (None, ""):
+                    try:
+                        base_rate = float(raw_rate)
+                    except (TypeError, ValueError):
+                        base_rate = None
+
+                records[month] = {
+                    "month": month,
+                    "paid": str(row.get('Paid', '')).strip().upper() in ("TRUE", "YES", "1"),
+                    "paid_at": str(row.get('Paid At', '') or ''),
+                    "base_rate": base_rate,
+                }
+
+            self._cache_set("zus", records)
+            return records
+        except Exception as e:
+            logger.error(f"Error fetching ZUS records: {e}")
+            return {}
+
+    def _invoices_by_month(self) -> Dict[str, List[str]]:
+        """Group invoice numbers by the month they were issued in.
+
+        Reads the already-cached invoice list — no extra API calls, no per-row
+        lookups. Invoices with an unparseable issue date are left out entirely.
+        """
+        by_month: Dict[str, List[str]] = {}
+        for inv in self.get_invoices():
+            key = issue_date_month(inv.get('issue_date'))
+            if not key:
+                continue
+            by_month.setdefault(key, []).append(inv.get('invoice_number', ''))
+        return by_month
+
+    def get_zus_payments(self, months: Optional[int] = None) -> Dict[str, Any]:
+        """Month-by-month ZUS list, newest first.
+
+        Every month carries the FIXED base rate from config. Months in which
+        invoices were issued are flagged `likely_higher` — the real contribution
+        is usually above the base rate then, but we have no formula for it, so
+        the flag never comes with an estimated amount. The only figures reported
+        are the config base rate and the real invoice count read from the sheet.
+        """
+        window = months or config.ZUS_DEFAULT_MONTHS
+        records = self._load_zus_records()
+        invoices_by_month = self._invoices_by_month()
+
+        # Last `window` calendar months, ending with the current one
+        now = datetime.now()
+        wanted = set()
+        year, month = now.year, now.month
+        for _ in range(window):
+            wanted.add(month_key(year, month))
+            month -= 1
+            if month == 0:
+                month = 12
+                year -= 1
+
+        # Anything already ticked stays visible even if it falls outside the window
+        wanted.update(records.keys())
+
+        rows = []
+        for key in sorted(wanted, reverse=True):
+            record = records.get(key, {})
+            paid = bool(record.get("paid"))
+            # A paid month keeps the rate that was in force when it was ticked;
+            # everything else shows the current configured base rate.
+            base_amount = record.get("base_rate") if (paid and record.get("base_rate")) else config.ZUS_BASE_AMOUNT_PLN
+            invoice_numbers = invoices_by_month.get(key, [])
+
+            rows.append({
+                "month": key,
+                "label": month_label(key),
+                "base_amount": base_amount,
+                "currency": config.ZUS_CURRENCY,
+                "paid": paid,
+                "paid_at": record.get("paid_at") or None,
+                "invoice_count": len(invoice_numbers),
+                "invoice_numbers": invoice_numbers,
+                "likely_higher": len(invoice_numbers) > 0,
+            })
+
+        return {
+            "base_amount": config.ZUS_BASE_AMOUNT_PLN,
+            "currency": config.ZUS_CURRENCY,
+            "months_requested": window,
+            "paid_count": sum(1 for r in rows if r["paid"]),
+            "unpaid_count": sum(1 for r in rows if not r["paid"]),
+            "months": rows,
+        }
+
+    def set_zus_paid(self, month: str, paid: bool) -> Optional[Dict]:
+        """Tick / un-tick a ZUS month. Upserts one row in the ZUS sheet.
+
+        Writes with RAW input so Sheets stores '2026-08' as text instead of
+        coercing it into a date.
+        """
+        try:
+            now = datetime.now()
+            paid_at = now.isoformat() if paid else ""
+            # Records the rate that was in force at the moment of ticking, so a
+            # future change to the base rate doesn't rewrite past months.
+            base_rate = config.ZUS_BASE_AMOUNT_PLN if paid else ""
+            row_values = [
+                month,
+                "TRUE" if paid else "FALSE",
+                paid_at,
+                base_rate,
+                now.isoformat(),
+            ]
+
+            all_data = self.zus_worksheet.get_all_records()
+            row_num = None
+            for idx, row in enumerate(all_data):
+                if str(row.get('Month', '')).strip() == month:
+                    row_num = idx + 2  # 1 for header, 1 for 0-index
+                    break
+
+            if row_num:
+                self.zus_worksheet.update([row_values], f"A{row_num}:E{row_num}")
+            else:
+                self.zus_worksheet.append_row(row_values)
+
+            self._cache_invalidate("zus")
+            logger.info(f"ZUS {month} marked {'paid' if paid else 'unpaid'}")
+
+            return {
+                "month": month,
+                "label": month_label(month),
+                "paid": paid,
+                "paid_at": paid_at or None,
+                "base_amount": config.ZUS_BASE_AMOUNT_PLN,
+                "currency": config.ZUS_CURRENCY,
+            }
+        except Exception as e:
+            logger.error(f"Error updating ZUS month {month}: {e}")
+            return None
 
 
 # Singleton
