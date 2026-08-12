@@ -102,20 +102,39 @@ def submit_to_ksef(invoice_id: int, body: Optional[KsefSubmitRequest] = None):
     try:
         result = submit_invoice_to_ksef(invoice, client)
 
-        # Store KSeF reference in invoice metadata
+        # The filing has happened and cannot be undone. The KSeF number is the
+        # only proof of it and the thing that stops a duplicate filing later, so
+        # a failure to store it is reported to the caller, not just logged.
+        reference_saved = False
+        save_error = None
         try:
             updates = {}
             if result.get("ksef_number"):
                 updates["ksef_reference"] = result["ksef_number"]
                 updates["ksef_status"] = result.get("ksef_status", "submitted")
             if updates:
-                db.update_invoice(invoice_id, updates)
+                reference_saved = bool(db.update_invoice(invoice_id, updates))
+                if not reference_saved:
+                    save_error = "invoice row not found in the sheet"
         except Exception as e:
+            save_error = str(e)
             logger.warning(f"Could not save KSeF reference to sheet: {e}")
+
+        if not reference_saved:
+            logger.error(
+                f"Invoice {invoice_id} WAS FILED to KSeF (ksef_number="
+                f"{result.get('ksef_number')}) but the reference could not be saved: {save_error}"
+            )
 
         return {
             "success": True,
             "invoice_id": invoice_id,
+            "reference_saved": reference_saved,
+            "warning": None if reference_saved else (
+                f"Invoice was filed with KSeF (number {result.get('ksef_number')}) but the "
+                f"reference could NOT be saved to the sheet ({save_error}). Record this number "
+                f"manually — without it the app cannot tell this invoice was already filed."
+            ),
             **result
         }
     except RuntimeError as e:

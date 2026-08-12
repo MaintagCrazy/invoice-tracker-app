@@ -315,7 +315,11 @@ class SheetsDatabaseService:
                     "paid_at": None,
                     "pdf_path": None,
                     "drive_file_id": row.get('Drive File ID', ''),
-                    "deleted_at": row.get('Deleted At', '')
+                    "deleted_at": row.get('Deleted At', ''),
+                    # KSeF filing is irreversible, so its reference is the only
+                    # proof the invoice was filed — and what stops it being filed twice.
+                    "ksef_reference": row.get('KSeF Reference', ''),
+                    "ksef_status": row.get('KSeF Status', '')
                 }
                 invoices.append(invoice)
 
@@ -475,20 +479,42 @@ class SheetsDatabaseService:
             logger.error(f"Error creating invoice: {e}")
             raise
 
+    # Only these fields have a column behind them. Anything else passed to
+    # update_invoice used to be accepted and silently dropped — that is how a
+    # KSeF reference could be lost right after an irreversible filing.
+    _UPDATABLE_COLUMNS = {
+        "description": 7,       # G
+        "amount": 8,            # H
+        "status": 10,           # J
+        "ksef_reference": 13,   # M
+        "ksef_status": 14,      # N
+    }
+
     def update_invoice(self, file_number: int, updates: Dict[str, Any]) -> bool:
-        """Update invoice fields. Accepts: description, amount, status, work_dates"""
+        """Update invoice fields. Accepts: description, amount, status,
+        ksef_reference, ksef_status.
+
+        Raises ValueError for any field with no column, rather than reporting
+        success for a write that never happened.
+        """
+        unknown = set(updates) - set(self._UPDATABLE_COLUMNS)
+        if unknown:
+            raise ValueError(
+                f"update_invoice cannot persist {sorted(unknown)} — no column for it. "
+                f"Persistable fields: {sorted(self._UPDATABLE_COLUMNS)}."
+            )
         try:
             all_data = self.db_worksheet.get_all_records()
             for idx, row in enumerate(all_data):
                 if int(row.get('File #', 0)) == file_number:
                     row_num = idx + 2  # 1 for header, 1 for 0-index
-                    # Column mapping: Description=7(G), Amount=8(H), Currency=9(I), Status=10(J)
-                    if "description" in updates:
-                        self.db_worksheet.update_cell(row_num, 7, updates["description"])
-                    if "amount" in updates:
-                        self.db_worksheet.update_cell(row_num, 8, float(updates["amount"]))
-                    if "status" in updates:
-                        self.db_worksheet.update_cell(row_num, 10, updates["status"])
+                    for field, col in self._UPDATABLE_COLUMNS.items():
+                        if field not in updates:
+                            continue
+                        value = updates[field]
+                        if field == "amount":
+                            value = float(value)
+                        self.db_worksheet.update_cell(row_num, col, value)
                     logger.info(f"Updated invoice {file_number}: {list(updates.keys())}")
                     self._cache_invalidate("invoices")
                     return True
