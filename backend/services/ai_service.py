@@ -595,6 +595,15 @@ class AIService:
                 except (json.JSONDecodeError, KeyError):
                     function_args = {}
 
+                # The sheet has no Work Dates column and the PDF prints only the
+                # description — fold the work period into the description so it
+                # actually reaches the printed invoice.
+                if function_name == "create_invoice":
+                    wd = (function_args.get("work_dates") or "").strip()
+                    desc = (function_args.get("description") or "").strip()
+                    if wd and wd not in desc:
+                        function_args["description"] = f"{desc} ({wd})" if desc else wd
+
                 # Validate required args for write operations
                 required_args = {
                     "create_invoice": ["client_name", "amount", "description"],
