@@ -24,10 +24,10 @@ try:
         FakturaPodmiot1, FakturaPodmiot2,
         Tnaglowek, TnaglowekKodFormularza, TnaglowekWariantFormularza,
         Tpodmiot1, Tpodmiot2, Tadres,
-        TkodWaluty, TrodzajFaktury, TstawkaPodatku, TformaPlatnosci,
+        TkodWaluty, TrodzajFaktury, TstawkaPodatku, TformaPlatnosci, TkodyKrajowUe,
         TrachunekBankowy, FakturaPodmiot2Jst, FakturaPodmiot2Gv,
     )
-    from ksef2.infra.schema.fa3.models.elementarne_typy_danych_v10_0_e import Twybor12
+    from ksef2.infra.schema.fa3.models.elementarne_typy_danych_v10_0_e import Twybor12, Twybor1
     from ksef2.infra.schema.fa3.models.kody_krajow_v10_0_e import TkodKraju
     from xsdata.models.datatype import XmlDate, XmlDateTime
     from xsdata_pydantic.bindings import XmlSerializer
@@ -165,7 +165,14 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
         nip = buyer_vat.replace("PL", "").replace(" ", "").replace("-", "")
         buyer_id_kwargs["nip"] = nip
     elif buyer_country in EU_COUNTRIES and buyer_vat:
-        buyer_id_kwargs["nr_vat_ue"] = buyer_vat
+        # FA(3) requires the country code and the number SEPARATELY: KodUE + NrVatUE.
+        # Sending "DE306313681" as NrVatUE (prefix embedded, no KodUE) is
+        # schema-invalid and KSeF rejects it.
+        vat_digits = buyer_vat.replace(" ", "").replace("-", "").upper()
+        if vat_digits.startswith(buyer_country):
+            vat_digits = vat_digits[len(buyer_country):]
+        buyer_id_kwargs["kod_ue"] = TkodyKrajowUe(buyer_country)
+        buyer_id_kwargs["nr_vat_ue"] = vat_digits
     elif buyer_vat:
         buyer_id_kwargs["nr_id"] = buyer_vat
 
@@ -178,26 +185,43 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
     }
 
     # ── Tax summary fields ────────────────────────────────────
+    # The summary bucket must match the line's rate code, or the invoice reports
+    # the turnover under the wrong heading and feeds the wrong box of JPK_V7.
+    #   P_13_1   — net taxed at 23%
+    #   P_13_8   — supplies/services OUTSIDE the territory of the country ("np")
+    #   P_13_6_3 — 0% rate, export
+    # (P_13_6_1 is 0%-rated DOMESTIC sales and P_13_6_2 is 0% intra-community
+    #  supply of goods — neither describes services to a foreign business.)
     tax_summary = {}
     if buyer_country == "PL":
         tax_summary["p_13_1"] = net   # net at 23%
         tax_summary["p_14_1"] = vat   # VAT at 23%
     elif buyer_country in EU_COUNTRIES:
-        tax_summary["p_13_6_1"] = net  # reverse charge net
+        tax_summary["p_13_8"] = net    # services outside PL, matches the np I line rate
     else:
-        tax_summary["p_13_6_2"] = net  # export net
+        tax_summary["p_13_6_3"] = net  # export, matches the 0 EX line rate
 
-    # ── Adnotacje (annotations) — all "no" for standard invoices ──
+    # ── Adnotacje (annotations) ───────────────────────────────
+    # Each flag is 1 = yes, 2 = no, and they are NOT interchangeable:
+    #   P_16  metoda kasowa (cash accounting)
+    #   P_17  samofakturowanie — the BUYER issued this invoice for us (art. 106d
+    #         ust. 1). Only ever 1 with a signed self-billing agreement.
+    #   P_18  odwrotne obciążenie — the buyer settles the VAT (reverse charge)
+    #   P_18A mechanizm podzielonej płatności (split payment)
+    # These were previously mislabelled and shifted by one, which declared
+    # self-invoicing on every EU sale while omitting the reverse-charge wording.
     is_reverse_charge = buyer_country in EU_COUNTRIES and buyer_country != "PL"
     adnotacje = FakturaFaAdnotacje(
-        p_16=Twybor12.VALUE_2,  # no self-invoicing
-        p_17=Twybor12.VALUE_1 if is_reverse_charge else Twybor12.VALUE_2,
-        p_18=Twybor12.VALUE_2,  # no split payment
-        p_18_a=Twybor12.VALUE_2,
-        zwolnienie=FakturaFaAdnotacjeZwolnienie(),
-        nowe_srodki_transportu=FakturaFaAdnotacjeNoweSrodkiTransportu(),
-        p_23=Twybor12.VALUE_2,  # no margin scheme
-        pmarzy=FakturaFaAdnotacjePmarzy(),
+        p_16=Twybor12.VALUE_2,   # not cash accounting
+        p_17=Twybor12.VALUE_2,   # NOT self-invoicing — we issue our own invoices
+        p_18=Twybor12.VALUE_1 if is_reverse_charge else Twybor12.VALUE_2,
+        p_18_a=Twybor12.VALUE_2,  # no split payment
+        # These sub-elements require their negative marker; emitting them empty
+        # is schema-invalid.
+        zwolnienie=FakturaFaAdnotacjeZwolnienie(p_19_n=Twybor1.VALUE_1),
+        nowe_srodki_transportu=FakturaFaAdnotacjeNoweSrodkiTransportu(p_22_n=Twybor1.VALUE_1),
+        p_23=Twybor12.VALUE_2,   # no margin scheme
+        pmarzy=FakturaFaAdnotacjePmarzy(p_pmarzy_n=Twybor1.VALUE_1),
     )
 
     # ── Build the Faktura ─────────────────────────────────────
@@ -248,7 +272,9 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
                 ),
             ],
             platnosc=FakturaFaPlatnosc(
-                forma_platnosci=TformaPlatnosci.VALUE_2,
+                # 6 = Przelew (bank transfer). Was 2 = Karta (card), which
+                # contradicted the IBAN/SWIFT block on the same invoice.
+                forma_platnosci=TformaPlatnosci.VALUE_6,
                 termin_platnosci=[
                     FakturaFaPlatnoscTerminPlatnosci(
                         termin=XmlDate(due_y, due_m, due_d)
@@ -288,8 +314,7 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     faktura = build_faktura(invoice, client)
 
     # Serialize to XML bytes
-    serializer = XmlSerializer()
-    xml_str = serializer.render(faktura)
+    xml_str = _render_xml(faktura)
     xml_bytes = xml_str.encode("utf-8")
 
     logger.info(f"Submitting invoice {invoice['invoice_number']} to KSeF (NIP: {nip})")
@@ -314,6 +339,24 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
         "invoice_number": invoice["invoice_number"],
         "submitted_at": datetime.now().isoformat(),
     }
+
+
+def _render_xml(faktura) -> str:
+    """Serialize the Faktura to FA(3) XML.
+
+    ksef2 switched its schema models from pydantic to plain dataclasses between
+    releases, and each needs a different xsdata serializer — the pydantic one
+    raises `XmlContextError: Type 'Faktura' is not a dataclass` on the new
+    models. The requirement is a floor (`ksef2>=...`), so production can be on
+    either; try the model's own binding and fall back rather than failing at the
+    last step before submission.
+    """
+    try:
+        return XmlSerializer().render(faktura)
+    except Exception as e:
+        logger.info(f"pydantic XML binding unusable ({type(e).__name__}), using plain xsdata")
+        from xsdata.formats.dataclass.serializers import XmlSerializer as PlainXmlSerializer
+        return PlainXmlSerializer().render(faktura)
 
 
 def _ksef2_version() -> str:

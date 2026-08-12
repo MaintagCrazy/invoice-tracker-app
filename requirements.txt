@@ -31,4 +31,7 @@ fpdf2>=2.7.0
 pikepdf>=8.0.0
 
 # KSeF 2.0 (Polish National e-Invoice System)
-ksef2>=0.10.0
+# Pinned: the FA(3) model style (pydantic vs dataclass) and method names change
+# between releases; an unpinned floor silently drifted prod to 0.18.1 and broke
+# both the health check and XML serialization. Re-test KSeF before bumping.
+ksef2==0.18.1
