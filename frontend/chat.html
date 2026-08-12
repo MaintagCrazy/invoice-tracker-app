@@ -33,6 +33,10 @@
         .doc-action-btn:hover { transform: translateY(-1px); }
         /* Preview iframe modal */
         .preview-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 80; display: flex; align-items: center; justify-content: center; }
+        /* Scale the full A4 preview down into a chat-sized thumbnail. The iframe
+           renders at full width then shrinks, so text stays sharp. */
+        .chat-preview-clip { height: 240px; overflow: hidden; cursor: pointer; background: #fff; }
+        .chat-preview-frame { width: 800px; height: 800px; border: 0; transform: scale(0.425); transform-origin: top left; pointer-events: none; }
         .preview-frame-container { background: white; border-radius: 12px; width: 90%; max-width: 800px; height: 85vh; display: flex; flex-direction: column; }
     </style>
 </head>
@@ -282,6 +286,15 @@
                     <div id="cf-delete-invoice-info" class="text-sm text-gray-600"></div>
                 </div>
 
+                <!-- Send by email: show the actual invoice being sent, so the
+                     document is verified before an irreversible send -->
+                <div id="form-send-email" class="hidden space-y-3">
+                    <div class="border rounded-lg overflow-hidden bg-white">
+                        <iframe id="cf-send-preview" class="w-full pointer-events-none" style="height:420px;border:0"></iframe>
+                    </div>
+                    <p class="text-xs text-gray-500 text-center">This is the PDF that will be attached.</p>
+                </div>
+
                 <!-- Action buttons -->
                 <div class="flex justify-between items-center mt-6">
                     <button id="preview-draft-btn" class="hidden text-blue-600 hover:text-blue-800 text-sm font-medium">
@@ -484,14 +497,8 @@
                 let extraHtml = '';
                 if (data.extracted_data && data.extracted_data.action_type === 'get_invoice_pdf') {
                     const d = data.extracted_data;
-                    extraHtml = `<div class="mt-3 flex gap-2">
-                        <button onclick="openPreviewOverlay('${d.preview_url}')" class="doc-action-btn bg-blue-100 text-blue-700 hover:bg-blue-200">
-                            <i class="fas fa-eye"></i> Preview
-                        </button>
-                        <a href="${d.download_url}" target="_blank" class="doc-action-btn bg-green-100 text-green-700 hover:bg-green-200">
-                            <i class="fas fa-download"></i> Download PDF
-                        </a>
-                    </div>`;
+                    // Render the invoice itself rather than only offering links to it.
+                    extraHtml = invoicePreviewCard(d.invoice_id, d.invoice_number);
                 }
 
                 addMessage(data.response, false, extraHtml);
@@ -539,8 +546,11 @@
             const previewBtn = document.getElementById('preview-draft-btn');
 
             // Reset all forms and button style
-            document.querySelectorAll('#form-invoice, #form-payment, #form-client, #form-edit-invoice, #form-delete-invoice')
+            document.querySelectorAll('#form-invoice, #form-payment, #form-client, #form-edit-invoice, #form-delete-invoice, #form-send-email')
                 .forEach(f => f.classList.add('hidden'));
+            // Drop the previous preview so a stale invoice can never be shown
+            // above a Send button for a different one.
+            document.getElementById('cf-send-preview').src = 'about:blank';
             previewBtn.classList.add('hidden');
             confirmCreateBtn.className = 'px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700';
             confirmInFlight = false;
@@ -629,8 +639,11 @@
                 icon.className = 'w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center';
                 icon.innerHTML = '<i class="fas fa-paper-plane text-blue-600 text-xl"></i>';
                 confirmCreateBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Send Email';
-                // No form fields — the recipient list is shown in the chat message above;
-                // confirming triggers the server-side pending action (send_invoice_email).
+                // Recipients are listed in the chat message above; the preview below
+                // shows the actual document, so it can be checked before sending.
+                document.getElementById('form-send-email').classList.remove('hidden');
+                document.getElementById('cf-send-preview').src =
+                    data.invoice_id ? `${API_BASE}/api/invoices/${data.invoice_id}/preview` : 'about:blank';
             }
 
             confirmModal.classList.remove('hidden');
@@ -745,7 +758,7 @@
                     const resp = await fetch(`${API_BASE}/api/invoices/?client_id=${client.id}&description=${encodeURIComponent(document.getElementById('cf-invoice-description').value)}&amount=${document.getElementById('cf-invoice-amount').value}&currency=${document.getElementById('cf-invoice-currency').value}&work_dates=${encodeURIComponent(document.getElementById('cf-invoice-dates').value || '')}`, {
                         method: 'POST'
                     });
-                    result = await resp.json();
+                    result = await readResult(resp);
                     if (resp.ok) {
                         result.success = true;
                         result.action_type = 'invoice';
@@ -766,7 +779,7 @@
                             notes: document.getElementById('cf-payment-notes').value || null
                         })
                     });
-                    result = await resp.json();
+                    result = await readResult(resp);
                     if (resp.ok) {
                         result.success = true;
                         result.action_type = 'payment';
@@ -785,7 +798,7 @@
                             email: document.getElementById('cf-client-email').value || null
                         })
                     });
-                    result = await resp.json();
+                    result = await readResult(resp);
                     if (resp.ok) {
                         result.success = true;
                         result.action_type = 'add_client';
@@ -800,7 +813,7 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' }
                     });
-                    result = await resp.json();
+                    result = await readResult(resp);
                     if (!resp.ok) {
                         throw new Error(result.detail || 'Failed to edit invoice');
                     }
@@ -810,7 +823,7 @@
                     const resp = await fetch(`${API_BASE}/api/invoices/${invoiceId}`, {
                         method: 'DELETE'
                     });
-                    result = await resp.json();
+                    result = await readResult(resp);
                     if (resp.ok) {
                         result.success = true;
                         result.action_type = 'delete_invoice';
@@ -826,7 +839,7 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' }
                     });
-                    result = await resp.json();
+                    result = await readResult(resp);
                     if (!resp.ok) {
                         throw new Error(result.detail || 'Failed to send invoice email');
                     }
@@ -846,7 +859,15 @@
                             data: result
                         };
                         showUndoToast(result.message || 'Action completed successfully!');
-                        addMessage(result.message || 'Done!');
+                        // Show the created/edited invoice inline so it can be checked
+                        // without leaving the chat.
+                        const previewId = (result.action_type === 'invoice' || result.action_type === 'edit_invoice')
+                            ? result.invoice_id : null;
+                        addMessage(
+                            result.message || 'Done!',
+                            false,
+                            previewId ? invoicePreviewCard(previewId, result.invoice_number) : ''
+                        );
                     }
 
                     // Reset conversation
@@ -912,9 +933,52 @@
             });
         });
 
+        // Server errors (502, crash, proxy timeout) come back as plain text, not
+        // JSON. Parsing those blindly surfaced raw parser noise like
+        // "Unexpected token 'I', "Internal S"..." to the user instead of the
+        // actual problem, so every confirm path goes through this.
+        async function readResult(resp) {
+            const text = await resp.text();
+            try {
+                return JSON.parse(text);
+            } catch {
+                if (resp.status >= 500) {
+                    throw new Error("The server hit an error completing that action. It may not have been applied — check the dashboard before retrying.");
+                }
+                throw new Error(text.slice(0, 200) || `Request failed (HTTP ${resp.status})`);
+            }
+        }
+
         function openPreviewOverlay(url) {
-            document.getElementById('preview-frame').src = url;
+            const frame = document.getElementById('preview-frame');
+            frame.removeAttribute('srcdoc');   // clear any draft preview still held
+            frame.src = url;
             document.getElementById('preview-overlay').classList.remove('hidden');
+        }
+
+        // Inline invoice preview attached to a chat message, so the document is
+        // visible in the conversation instead of only inside a modal.
+        function invoicePreviewCard(invoiceId, invoiceNumber) {
+            const url = `${API_BASE}/api/invoices/${invoiceId}/preview`;
+            const label = invoiceNumber ? `Invoice ${invoiceNumber}` : `Invoice #${invoiceId}`;
+            return `
+                <div class="mt-3 border rounded-lg overflow-hidden bg-white" style="max-width:340px">
+                    <div class="chat-preview-clip" onclick="openPreviewOverlay('${url}')" title="Click to enlarge">
+                        <iframe src="${url}" class="chat-preview-frame" scrolling="no" tabindex="-1"></iframe>
+                    </div>
+                    <div class="flex items-center justify-between px-3 py-2 border-t bg-gray-50">
+                        <span class="text-xs text-gray-600 truncate">${label}</span>
+                        <span class="flex gap-3 flex-shrink-0">
+                            <button onclick="openPreviewOverlay('${url}')" class="text-xs text-blue-600 hover:text-blue-800">
+                                <i class="fas fa-expand mr-1"></i>Open
+                            </button>
+                            <a href="${API_BASE}/api/invoices/${invoiceId}/download" target="_blank"
+                               class="text-xs text-blue-600 hover:text-blue-800">
+                                <i class="fas fa-download mr-1"></i>PDF
+                            </a>
+                        </span>
+                    </div>
+                </div>`;
         }
 
         function closePreviewOverlay(e) {

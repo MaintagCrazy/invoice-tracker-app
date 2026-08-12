@@ -203,6 +203,7 @@ async def chat(message: ChatMessage):
                 extracted_data = {
                     "action_type": "get_invoice_pdf",
                     "invoice_id": pdf_data.get("invoice_id"),
+                    "invoice_number": pdf_data.get("invoice_number"),
                     "preview_url": pdf_data.get("preview_url"),
                     "download_url": pdf_data.get("download_url")
                 }
