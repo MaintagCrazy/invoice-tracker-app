@@ -240,10 +240,23 @@ async def chat(message: ChatMessage):
                 f"I'll email invoice **{inv.get('invoice_number', '?')}** (file #{inv.get('file_number', '?')}) to:",
                 f"- **{client.get('name', 'the client')}** — {client_email or '⚠️ no email on file (client will be skipped)'}",
             ]
+            # Structured copy so the confirm dialog can show recipients too —
+            # the dialog covers the chat, and WHO receives it is the detail that
+            # matters most before an irreversible send.
+            recipients = [{
+                "email": client_email or "",
+                "label": client.get("name", "the client"),
+                "note": "" if client_email else "no email on file — will be skipped",
+            }]
             for tax_email in _cfg.TAX_ACCOUNTANT_EMAILS:
                 lines.append(f"- {tax_email} (tax accountant — always copied)")
+                recipients.append({"email": tax_email, "label": "Tax accountant", "note": "always copied"})
             for r in (extracted.get("additional_recipients") or []):
                 lines.append(f"- {r}")
+                recipients.append({"email": r, "label": "Additional recipient", "note": ""})
+            extracted["recipients"] = recipients
+            extracted["invoice_number"] = inv.get("invoice_number")
+            result["extracted_data"] = extracted
             lines.append("")
             lines.append(f"Invoice: {inv.get('description', '')} — {inv.get('currency', 'EUR')} {float(inv.get('amount', 0)):,.2f}")
             lines.append("")

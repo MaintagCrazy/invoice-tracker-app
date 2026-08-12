@@ -289,10 +289,11 @@
                 <!-- Send by email: show the actual invoice being sent, so the
                      document is verified before an irreversible send -->
                 <div id="form-send-email" class="hidden space-y-3">
+                    <div id="cf-send-recipients" class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm"></div>
                     <div class="border rounded-lg overflow-hidden bg-white">
-                        <iframe id="cf-send-preview" class="w-full pointer-events-none" style="height:420px;border:0"></iframe>
+                        <iframe id="cf-send-preview" class="w-full pointer-events-none" style="height:340px;border:0"></iframe>
                     </div>
-                    <p class="text-xs text-gray-500 text-center">This is the PDF that will be attached.</p>
+                    <p class="text-xs text-gray-500 text-center">This is the PDF that will be attached. Sending cannot be undone.</p>
                 </div>
 
                 <!-- Action buttons -->
@@ -644,6 +645,19 @@
                 document.getElementById('form-send-email').classList.remove('hidden');
                 document.getElementById('cf-send-preview').src =
                     data.invoice_id ? `${API_BASE}/api/invoices/${data.invoice_id}/preview` : 'about:blank';
+
+                const rl = (data.recipients || []);
+                document.getElementById('cf-send-recipients').innerHTML =
+                    `<div class="font-medium text-blue-900 mb-1">
+                        <i class="fas fa-paper-plane mr-1"></i>Sending invoice ${escapeHtml(data.invoice_number || '#' + data.invoice_id)} to:
+                     </div>` +
+                    (rl.length
+                        ? `<ul class="space-y-0.5">` + rl.map(r => `
+                            <li class="text-blue-900">
+                                <span class="font-medium">${escapeHtml(r.email || '—')}</span>
+                                <span class="text-blue-700 text-xs"> — ${escapeHtml(r.label || '')}${r.note ? ' (' + escapeHtml(r.note) + ')' : ''}</span>
+                            </li>`).join('') + `</ul>`
+                        : `<p class="text-blue-800">See the recipient list in the message above.</p>`);
             }
 
             confirmModal.classList.remove('hidden');
@@ -932,6 +946,12 @@
                 alert('Preview failed: ' + err.message);
             });
         });
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+            ));
+        }
 
         // Server errors (502, crash, proxy timeout) come back as plain text, not
         // JSON. Parsing those blindly surfaced raw parser noise like
