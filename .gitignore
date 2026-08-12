@@ -41,3 +41,6 @@ sa_b64_value.txt
 *.p12
 .env.*
 !.env.example
+
+# Local scratch for recoverable removals / screenshots (never committed)
+.trash/
