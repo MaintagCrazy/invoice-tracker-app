@@ -270,6 +270,7 @@ SYSTEM_PROMPT = """You are the AI assistant for C.D. Grupa Budowlana's invoice t
 4. When the user refers to a client by partial name (e.g., "Schuy" or "Bauceram"), match it to the closest client in the KNOWN CLIENTS list.
 5. Dates (work_dates) are OPTIONAL for invoices. If the user doesn't mention dates, don't include them. Never block an invoice because dates are missing.
 6. Use the provided function tools to take actions. For questions and greetings, just respond normally without calling tools.
+7. When a message looks like an action request but a required detail is missing, ASK for it — never answer with an unrelated data dump. Most common case: a message with a description and an amount (e.g. "Baubegleitung Baustelle Hofheim 01.07-12.08 15k") is an invoice request whose CLIENT is missing — ask which client it is for, do NOT call query_data or list invoices instead. Shorthand amounts like "15k" mean 15000.
 
 ## INVOICE NUMBERING — VERY IMPORTANT:
 - Each invoice has TWO identifiers:
@@ -346,7 +347,26 @@ class AIService:
         history = self._get_conversation(conversation_id)
         history.append(message)
         if len(history) > 20:
-            self.conversations[conversation_id] = history[-20:]
+            trimmed = history[-20:]
+            # History must start on a user turn: Claude rejects a first message
+            # that is an assistant turn or an orphaned tool result.
+            while trimmed and trimmed[0].get("role") != "user":
+                trimmed.pop(0)
+            self.conversations[conversation_id] = trimmed
+
+    def record_tool_result(self, conversation_id: str, tool_call_id: str, result_content: str):
+        """Append a tool result to history without an AI roundtrip.
+
+        Every stored assistant tool_call MUST be followed by a matching tool
+        message — Claude rejects a dangling tool_call on the next turn (this
+        was the source of the recurring 'trouble connecting' errors after
+        list queries, when results were returned to the user directly).
+        """
+        self._add_to_conversation(conversation_id, {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": result_content,
+        })
 
     def store_pending_action(self, conversation_id: str, action: Dict[str, Any]):
         """Store a pending write action for later confirmation (with timestamp)"""
@@ -488,8 +508,11 @@ class AIService:
                             "messages": messages,
                             "tools": FUNCTION_TOOLS,
                             "tool_choice": "auto",
-                            "temperature": 0.4,
-                            "max_tokens": 1500,
+                            # No temperature: Claude Sonnet 5 rejects non-default
+                            # sampling params (400). Gemini fallbacks use their default.
+                            # 3000 covers adaptive-thinking tokens, which count
+                            # against max_tokens on Claude.
+                            "max_tokens": 3000,
                         },
                     )
                     response.raise_for_status()
@@ -554,11 +577,15 @@ class AIService:
             assistant_message = choice["message"]
             finish_reason = choice.get("finish_reason", "stop")
 
-            # Store assistant message in conversation
-            self._add_to_conversation(conversation_id, assistant_message)
-
             # Check for tool calls
             tool_calls = assistant_message.get("tool_calls", [])
+            if tool_calls:
+                # Only the first tool call is processed — trim the stored message
+                # to match, so no unanswered tool_call ever sits in history.
+                assistant_message["tool_calls"] = tool_calls[:1]
+
+            # Store assistant message in conversation
+            self._add_to_conversation(conversation_id, assistant_message)
 
             if tool_calls:
                 tool_call = tool_calls[0]  # Handle one tool call at a time
@@ -581,6 +608,11 @@ class AIService:
                     missing = [a for a in required_args[function_name] if a not in function_args]
                     if missing:
                         logger.warning(f"AI returned {function_name} with missing args: {missing}")
+                        self.record_tool_result(
+                            conversation_id,
+                            tool_call.get("id", ""),
+                            f"Rejected — missing required arguments: {', '.join(missing)}. Ask the user for them.",
+                        )
                         return {
                             "response": f"I need more information: {', '.join(missing)}. Could you please provide those details?",
                             "conversation_id": conversation_id,
@@ -610,6 +642,15 @@ class AIService:
                         "arguments": function_args,
                         "tool_call_id": tool_call.get("id", "")
                     })
+
+                    # Close the tool call in history: if the user types a reply
+                    # instead of clicking confirm, the next turn must not carry
+                    # a dangling tool_call.
+                    self.record_tool_result(
+                        conversation_id,
+                        tool_call.get("id", ""),
+                        "Confirmation dialog shown to the user. Do not repeat this action; wait for their confirmation or follow-up.",
+                    )
 
                     return {
                         "response": confirmation_msg,

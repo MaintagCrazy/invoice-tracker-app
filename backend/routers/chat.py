@@ -209,7 +209,10 @@ async def chat(message: ChatMessage):
             except (json.JSONDecodeError, KeyError):
                 pass
         else:
-            # Return pre-formatted text directly — no AI roundtrip
+            # Return pre-formatted text directly — no AI roundtrip, but the
+            # result must still land in history so the model has seen it and
+            # the tool call isn't left dangling (Claude rejects that next turn).
+            ai_service.record_tool_result(result["conversation_id"], tool_call_id, read_result)
             ai_response = read_result
 
         return ChatResponse(

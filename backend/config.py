@@ -31,7 +31,7 @@ class Config:
     # unavailable (OpenRouter 404). Override the whole chain with AI_MODELS
     # ("a,b,c"), or pin a single primary with AI_MODEL. All entries below are
     # verified to support OpenRouter tool/function calling.
-    _DEFAULT_AI_MODELS = "google/gemini-3.5-flash,google/gemini-2.5-flash,google/gemini-2.5-flash-lite"
+    _DEFAULT_AI_MODELS = "anthropic/claude-sonnet-5,google/gemini-3.5-flash,google/gemini-2.5-flash"
     AI_MODELS: List[str] = [
         m.strip()
         for m in (os.environ.get("AI_MODELS") or os.environ.get("AI_MODEL") or _DEFAULT_AI_MODELS).split(",")
