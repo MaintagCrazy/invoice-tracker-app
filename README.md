@@ -1,5 +1,7 @@
 # Invoice Tracker App
 
+> **Live on the Sotto VPS since 12 Oct 2026, not Railway.** Where it runs, where the data is and how to deploy: see `CLAUDE.md`.
+
 AI-powered invoice creation and tracking system for C.D. Grupa Budowlana.
 
 ## Features
