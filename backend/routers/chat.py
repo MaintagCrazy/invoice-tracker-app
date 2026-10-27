@@ -6,10 +6,12 @@ Read operations execute immediately; write operations need confirmation.
 import json
 import logging
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.concurrency import run_in_threadpool
 
 from models.schemas import ChatMessage, ChatResponse
 from services.ai_service import get_ai_service
-from services.sheets_database import get_sheets_db
+from services.sheets_database import get_sheets_db, InvoiceLocked, DuplicateFileNumber
+from services.ksef_service import KsefFilingError, require_filed_to_send, file_invoice_in_ksef
 from middleware.rate_limiter import rate_limit_dependency
 
 logger = logging.getLogger(__name__)
@@ -305,12 +307,24 @@ async def confirm_action(conversation_id: str):
                 work_dates=args.get("work_dates")
             )
             ai_service.clear_conversation(conversation_id)
+            ksef_error = None
+            try:
+                invoice = await run_in_threadpool(file_invoice_in_ksef, db, invoice, client)
+            except KsefFilingError as e:
+                ksef_error = str(e)
+            if ksef_error:
+                msg = f"Invoice {invoice['invoice_number']} created but NOT filed in KSeF: {ksef_error}"
+            elif invoice.get("ksef_reference"):
+                msg = f"Invoice {invoice['invoice_number']} created and filed in KSeF ({invoice['ksef_reference']})."
+            else:
+                msg = f"Invoice {invoice['invoice_number']} created (not liable for KSeF: issued before 01.04.2026 or no valid date)."
             return {
                 "success": True,
                 "action_type": "invoice",
                 "invoice_id": invoice["id"],
                 "invoice_number": invoice["invoice_number"],
-                "message": f"Invoice {invoice['invoice_number']} created successfully!"
+                "ksef_error": ksef_error,
+                "message": msg
             }
 
         elif function_name == "record_payment":
@@ -366,6 +380,10 @@ async def confirm_action(conversation_id: str):
             if not updates:
                 raise HTTPException(status_code=400, detail="No changes specified")
 
+            if updates.get("status") == "sent":
+                inv = db.get_invoice(invoice_id)
+                if inv:
+                    require_filed_to_send(inv)
             success = db.update_invoice(invoice_id, updates)
             if not success:
                 raise HTTPException(status_code=404, detail=f"Invoice #{invoice_id} not found")
@@ -395,11 +413,20 @@ async def confirm_action(conversation_id: str):
         elif function_name == "send_invoice_email":
             from routers.email import send_invoice_sync
             invoice_id = int(args["invoice_id"])
-            result = send_invoice_sync(
-                invoice_id=invoice_id,
-                additional_recipients=args.get("additional_recipients"),
-                custom_message=args.get("custom_message"),
-            )
+            try:
+                result = await run_in_threadpool(
+                    send_invoice_sync,
+                    invoice_id=invoice_id,
+                    additional_recipients=args.get("additional_recipients"),
+                    custom_message=args.get("custom_message"),
+                )
+            except KsefFilingError as e:
+                return {
+                    "success": False,
+                    "action_type": "send_invoice_email",
+                    "invoice_id": invoice_id,
+                    "message": f"Invoice #{invoice_id} was NOT emailed. {e}",
+                }
             ai_service.clear_conversation(conversation_id)
             sent, failed = result["sent"], result["failed"]
             recips = ", ".join(result["recipients"]) if result["recipients"] else "no one"
@@ -423,6 +450,8 @@ async def confirm_action(conversation_id: str):
         else:
             raise HTTPException(status_code=400, detail=f"Unknown action: {function_name}")
 
+    except (InvoiceLocked, DuplicateFileNumber, KsefFilingError) as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

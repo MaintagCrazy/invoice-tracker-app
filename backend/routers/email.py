@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from models.schemas import SendEmailRequest
 from services.sheets_database import get_sheets_db
+from fastapi.concurrency import run_in_threadpool
+from services.ksef_service import ensure_filed, KsefFilingError
 from services.pdf_service import get_pdf_service
 from services.email_service import get_email_service
 
@@ -88,9 +90,8 @@ def send_invoice_sync(
     pdf_service = get_pdf_service()
     email_service = get_email_service()
 
-    invoice = db.get_invoice(invoice_id)
-    if not invoice:
-        raise ValueError(f"Invoice #{invoice_id} not found")
+    # An invoice without a KSeF number is never emailed: file it first, fail loudly.
+    invoice = ensure_filed(db, invoice_id)
 
     invoice_data = {
         "invoice_number": invoice["invoice_number"],
@@ -100,6 +101,8 @@ def send_invoice_sync(
         "currency": invoice["currency"],
         "issue_date": invoice["issue_date"],
         "due_date": invoice["due_date"],
+        "ksef_reference": invoice.get("ksef_reference", ""),
+        "ksef_hash": invoice.get("ksef_hash", ""),
     }
     client = invoice.get("client", {})
     pdf_bytes = pdf_service.generate_pdf_bytes(invoice_data, {
@@ -125,7 +128,10 @@ def send_invoice_sync(
     failed = sum(1 for r in results if not r.get("success"))
     succeeded = [r.get("recipient") for r in results if r.get("success")]
     if sent:
-        db.update_invoice_status(invoice_id, "sent")
+        try:
+            db.update_invoice_status(invoice_id, "sent")
+        except ValueError as e:  # the email is out; say why the status did not change
+            logger.error(f"Invoice {invoice_id} emailed but status not updated: {e}")
 
     logger.info(f"[chat] Invoice {invoice_id} email: {sent} sent, {failed} failed")
 
@@ -168,9 +174,13 @@ async def send_invoice(
     db = get_sheets_db()
     pdf_service = get_pdf_service()
 
-    invoice = db.get_invoice(invoice_id)
-    if not invoice:
+    if not db.get_invoice(invoice_id):
         raise HTTPException(status_code=404, detail="Invoice not found")
+    try:
+        # blocking KSeF call (up to ~60s): keep it off the event loop
+        invoice = await run_in_threadpool(ensure_filed, db, invoice_id)
+    except KsefFilingError as e:
+        raise HTTPException(status_code=502, detail=f"Email NOT sent. {e}")
 
     # Generate PDF
     invoice_data = {
@@ -180,7 +190,9 @@ async def send_invoice(
         "amount": invoice['amount'],
         "currency": invoice['currency'],
         "issue_date": invoice['issue_date'],
-        "due_date": invoice['due_date']
+        "due_date": invoice['due_date'],
+        "ksef_reference": invoice.get('ksef_reference', ''),
+        "ksef_hash": invoice.get('ksef_hash', '')
     }
 
     client = invoice.get('client', {})

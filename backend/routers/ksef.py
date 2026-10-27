@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from config import config
 from services.sheets_database import get_sheets_db
-from services.ksef_service import submit_invoice_to_ksef, check_ksef_health
+from services.ksef_service import file_invoice_in_ksef, KsefFilingError, check_ksef_health
 
 logger = logging.getLogger(__name__)
 
@@ -100,48 +100,23 @@ def submit_to_ksef(invoice_id: int, body: Optional[KsefSubmitRequest] = None):
         )
 
     try:
-        result = submit_invoice_to_ksef(invoice, client)
-
-        # The filing has happened and cannot be undone. The KSeF number is the
-        # only proof of it and the thing that stops a duplicate filing later, so
-        # a failure to store it is reported to the caller, not just logged.
-        reference_saved = False
-        save_error = None
-        try:
-            updates = {}
-            if result.get("ksef_number"):
-                updates["ksef_reference"] = result["ksef_number"]
-                updates["ksef_status"] = result.get("ksef_status", "submitted")
-            if updates:
-                reference_saved = bool(db.update_invoice(invoice_id, updates))
-                if not reference_saved:
-                    save_error = "invoice row not found in the sheet"
-        except Exception as e:
-            save_error = str(e)
-            logger.warning(f"Could not save KSeF reference to sheet: {e}")
-
-        if not reference_saved:
-            logger.error(
-                f"Invoice {invoice_id} WAS FILED to KSeF (ksef_number="
-                f"{result.get('ksef_number')}) but the reference could not be saved: {save_error}"
-            )
-
-        return {
-            "success": True,
-            "invoice_id": invoice_id,
-            "reference_saved": reference_saved,
-            "warning": None if reference_saved else (
-                f"Invoice was filed with KSeF (number {result.get('ksef_number')}) but the "
-                f"reference could NOT be saved to the sheet ({save_error}). Record this number "
-                f"manually — without it the app cannot tell this invoice was already filed."
-            ),
-            **result
-        }
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        # same guarded path as automatic filing: lock, unique File #, buyer VAT id, date, recovery
+        filed = file_invoice_in_ksef(db, invoice, client)
+    except KsefFilingError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.exception(f"KSeF submission failed for invoice {invoice_id}")
         raise HTTPException(status_code=500, detail=f"KSeF submission failed: {e}")
+    if not filed.get("ksef_reference"):
+        raise HTTPException(status_code=400, detail="Invoice is not liable for KSeF (issued before 01.04.2026 or no valid date).")
+    return {
+        "success": True,
+        "invoice_id": invoice_id,
+        "reference_saved": True,
+        "ksef_number": filed["ksef_reference"],
+        "ksef_status": filed.get("ksef_status"),
+        "invoice_number": filed.get("invoice_number"),
+    }
 
 
 @router.get("/status/{invoice_id}")
@@ -160,6 +135,41 @@ def get_ksef_status(invoice_id: int):
         "ksef_reference": invoice.get("ksef_reference"),
         "ksef_status": invoice.get("ksef_status", "not_submitted"),
     }
+
+
+@router.post("/backfill-hashes")
+def backfill_hashes():
+    """Store the QR hash for invoices filed before hashes were kept (downloads the filed XML
+    from KSeF, cross-checks it with KSeF's own hash, writes only the KSeF Hash column), then
+    re-uploads each such invoice's PDF to Drive so it carries the QR."""
+    from services.ksef_service import backfill_ksef_hashes
+    db = get_sheets_db()
+    try:
+        results = backfill_ksef_hashes(db)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    for r in results:
+        if r.get("saved"):
+            r["drive_updated"] = _reupload_pdf(db, r["invoice_number"])
+    return {"results": results}
+
+
+def _reupload_pdf(db, invoice_number: str) -> bool:
+    try:
+        from services.pdf_service import get_pdf_service
+        from services.drive_storage import get_drive_service, drive_filename
+        inv = next(i for i in db.get_invoices() if i["invoice_number"] == invoice_number)
+        c = inv.get("client", {})
+        pdf = get_pdf_service().generate_pdf_bytes(
+            {k: inv.get(k, "") for k in ("invoice_number", "description", "amount", "currency",
+                                         "issue_date", "due_date", "ksef_reference", "ksef_hash")},
+            {"name": c.get("name", ""), "address": c.get("address", ""), "company_id": c.get("company_id", "")})
+        file_id = get_drive_service().upload_pdf(pdf, drive_filename(inv["file_number"]))
+        db.update_invoice_drive_file_id(inv["file_number"], file_id)
+        return True
+    except Exception as e:
+        logger.error(f"Drive re-upload failed for {invoice_number}: {e}")
+        return False
 
 
 @router.get("/health")

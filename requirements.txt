@@ -9,6 +9,7 @@ google-auth>=2.27.0
 
 # PDF Generation (ksef2 requires weasyprint>=63.0)
 weasyprint>=63.0
+qrcode[pil]>=7.4
 
 # HTTP Client (ksef2 requires httpx>=0.28.1)
 httpx[http2]>=0.28.1

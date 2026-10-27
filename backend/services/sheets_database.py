@@ -83,6 +83,14 @@ SEED_CLIENTS = [
 ]
 
 
+class DuplicateFileNumber(ValueError):
+    """The same File # sits on more than one sheet row; a write by File # would hit the wrong row."""
+
+
+class InvoiceLocked(ValueError):
+    """The invoice is filed in KSeF; it may not be deleted, purged or changed."""
+
+
 CACHE_TTL = 30  # seconds — how long cached sheet data is considered fresh
 
 
@@ -154,11 +162,22 @@ class SheetsDatabaseService:
             self._init_clients_worksheet()
             self._init_zus_worksheet()
             self._ensure_deleted_at_column()
+            self._ensure_ksef_hash_column()
             logger.info(f"Connected to Google Sheet: {SHEET_ID}")
 
         except Exception as e:
             logger.error(f"Failed to connect to Google Sheets: {e}")
             raise
+
+    def _ensure_ksef_hash_column(self):
+        """Ensure header 'KSeF Hash' exists in column O (15): the QR hash lives there."""
+        try:
+            headers = self.db_worksheet.row_values(1)
+            if len(headers) < 15 or headers[14] != "KSeF Hash":
+                self.db_worksheet.update_cell(1, 15, "KSeF Hash")
+                logger.info("Added 'KSeF Hash' column header to Database sheet")
+        except Exception as e:
+            logger.warning(f"Could not ensure 'KSeF Hash' column: {e}")
 
     def _ensure_deleted_at_column(self):
         """Ensure the Database sheet has a 'Deleted At' header in column L (12)"""
@@ -384,7 +403,9 @@ class SheetsDatabaseService:
                     # KSeF filing is irreversible, so its reference is the only
                     # proof the invoice was filed — and what stops it being filed twice.
                     "ksef_reference": row.get('KSeF Reference', ''),
-                    "ksef_status": row.get('KSeF Status', '')
+                    "ksef_status": row.get('KSeF Status', ''),
+                    # base64url SHA-256 of the filed XML: needed for the QR on the PDF
+                    "ksef_hash": row.get('KSeF Hash', '')
                 }
                 invoices.append(invoice)
 
@@ -553,7 +574,26 @@ class SheetsDatabaseService:
         "status": 10,           # J
         "ksef_reference": 13,   # M
         "ksef_status": 14,      # N
+        "ksef_hash": 15,        # O (header "KSeF Hash")
     }
+
+    def _find_row(self, file_number: int):
+        """(sheet row number, row dict) for a File #, or None. Raises DuplicateFileNumber
+        when the File # is on several rows (deleted rows count), so no write can land on
+        the wrong invoice."""
+        found = []
+        for idx, row in enumerate(self.db_worksheet.get_all_records()):
+            try:
+                if int(row.get('File #', 0)) == file_number:
+                    found.append((idx + 2, row))  # 1 for header, 1 for 0-index
+            except (TypeError, ValueError):
+                continue
+        if len(found) > 1:
+            raise DuplicateFileNumber(
+                f"File # {file_number} appears on {len(found)} sheet rows "
+                f"({', '.join(str(r) for r, _ in found)}); fix the sheet first."
+            )
+        return found[0] if found else None
 
     def update_invoice(self, file_number: int, updates: Dict[str, Any]) -> bool:
         """Update invoice fields. Accepts: description, amount, status,
@@ -568,42 +608,47 @@ class SheetsDatabaseService:
                 f"update_invoice cannot persist {sorted(unknown)} — no column for it. "
                 f"Persistable fields: {sorted(self._UPDATABLE_COLUMNS)}."
             )
-        try:
-            all_data = self.db_worksheet.get_all_records()
-            for idx, row in enumerate(all_data):
-                if int(row.get('File #', 0)) == file_number:
-                    row_num = idx + 2  # 1 for header, 1 for 0-index
-                    for field, col in self._UPDATABLE_COLUMNS.items():
-                        if field not in updates:
-                            continue
-                        value = updates[field]
-                        if field == "amount":
-                            value = float(value)
-                        self.db_worksheet.update_cell(row_num, col, value)
-                    logger.info(f"Updated invoice {file_number}: {list(updates.keys())}")
-                    self._cache_invalidate("invoices")
-                    return True
+        found = self._find_row(file_number)  # may raise DuplicateFileNumber
+        if not found:
             return False
+        row_num, row = found
+        if row.get('KSeF Reference'):
+            if {"amount", "description"} & set(updates):
+                raise InvoiceLocked(f"Invoice {row.get('Invoice Number')} is filed in KSeF ({row['KSeF Reference']}); amount and description cannot change. Issue a correction invoice instead.")
+            # never overwrite a stored KSeF number/status with an error or in-progress marker
+            updates = {k: v for k, v in updates.items() if k != "ksef_reference"
+                       and not (k == "ksef_status" and str(v).startswith(("BLAD", "W TOKU")))}
+        try:
+            for field, col in self._UPDATABLE_COLUMNS.items():
+                if field not in updates:
+                    continue
+                value = updates[field]
+                if field == "amount":
+                    value = float(value)
+                self.db_worksheet.update_cell(row_num, col, value)
+            logger.info(f"Updated invoice {file_number} (row {row_num}): {list(updates.keys())}")
+            self._cache_invalidate("invoices")
+            return True
         except Exception as e:
             logger.error(f"Error updating invoice {file_number}: {e}")
             return False
 
     def delete_invoice(self, file_number: int) -> bool:
         """Soft-delete an invoice: set status to 'deleted' and record deletion date.
-        Invoice remains in the sheet for 30 days and can be restored."""
-        try:
-            all_data = self.db_worksheet.get_all_records()
-            for idx, row in enumerate(all_data):
-                if int(row.get('File #', 0)) == file_number:
-                    row_num = idx + 2
-                    # Set status to "deleted" (column J = 10)
-                    self.db_worksheet.update_cell(row_num, 10, "deleted")
-                    # Set Deleted At date (column L = 12)
-                    self.db_worksheet.update_cell(row_num, 12, datetime.now().isoformat())
-                    self._cache_invalidate("invoices")
-                    logger.info(f"Soft-deleted invoice {file_number}")
-                    return True
+        Invoice remains in the sheet for 30 days and can be restored.
+        A filed invoice is never deleted (raises InvoiceLocked)."""
+        found = self._find_row(file_number)  # may raise DuplicateFileNumber
+        if not found:
             return False
+        row_num, row = found
+        if row.get('KSeF Reference'):
+            raise InvoiceLocked(f"Invoice {row.get('Invoice Number')} is filed in KSeF ({row['KSeF Reference']}) and cannot be deleted.")
+        try:
+            self.db_worksheet.update_cell(row_num, 10, "deleted")
+            self.db_worksheet.update_cell(row_num, 12, datetime.now().isoformat())
+            self._cache_invalidate("invoices")
+            logger.info(f"Soft-deleted invoice {file_number}")
+            return True
         except Exception as e:
             logger.error(f"Error soft-deleting invoice {file_number}: {e}")
             return False
@@ -638,7 +683,7 @@ class SheetsDatabaseService:
             rows_to_delete = []
 
             for idx, row in enumerate(all_data):
-                if row.get('Status') == 'deleted' and row.get('Deleted At'):
+                if row.get('Status') == 'deleted' and row.get('Deleted At') and not row.get('KSeF Reference'):
                     try:
                         deleted_at = datetime.fromisoformat(row['Deleted At'])
                         if deleted_at < cutoff:
@@ -676,20 +721,15 @@ class SheetsDatabaseService:
             return False
 
     def update_invoice_status(self, file_number: int, status: str) -> bool:
-        """Update invoice status in sheet"""
-        try:
-            # Find the row
-            all_data = self.db_worksheet.get_all_records()
-            for idx, row in enumerate(all_data):
-                if int(row.get('File #', 0)) == file_number:
-                    # Row index is idx + 2 (1 for header, 1 for 0-index)
-                    row_num = idx + 2
-                    # Status is column J (10th column)
-                    self.db_worksheet.update_cell(row_num, 10, status)
-                    self._cache_invalidate("invoices")
-                    logger.info(f"Updated invoice {file_number} status to {status}")
-                    return True
+        """Update invoice status in sheet (Status is column J, 10)"""
+        found = self._find_row(file_number)  # may raise DuplicateFileNumber
+        if not found:
             return False
+        try:
+            self.db_worksheet.update_cell(found[0], 10, status)
+            self._cache_invalidate("invoices")
+            logger.info(f"Updated invoice {file_number} status to {status}")
+            return True
         except Exception as e:
             logger.error(f"Error updating invoice status: {e}")
             return False

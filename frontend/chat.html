@@ -776,6 +776,11 @@
                     if (resp.ok) {
                         result.success = true;
                         result.action_type = 'invoice';
+                        result.message = result.ksef_error
+                            ? `Invoice ${result.invoice_number} created but NOT filed in KSeF: ${result.ksef_error}`
+                            : (result.ksef_reference
+                                ? `Invoice ${result.invoice_number} created and filed in KSeF (${result.ksef_reference}).`
+                                : `Invoice ${result.invoice_number} created.`);
                     } else {
                         throw new Error(result.detail || 'Failed to create invoice');
                     }
