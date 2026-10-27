@@ -426,7 +426,8 @@ def _metadata(auth, invoice: dict, client: dict, ksef_number: Optional[str] = No
             role="seller", date_type="issue_date", amount_type="brutto",
             date_from=datetime(d.year, d.month, d.day, tzinfo=tz),
             date_to=datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1),
-            seller_nip=config.COMPANY["nip"], invoice_number=invoice["invoice_number"],
+            # no seller_nip: KSeF rejects it for role=seller ("sellerNip must be null when subject is Subject1")
+            invoice_number=invoice["invoice_number"],
         )
         hits = [m for page in auth.invoices.query_metadata_pages(filters=filters) for m in page.invoices
                 if m.invoice_number == invoice["invoice_number"] and (not ksef_number or m.ksef_number == ksef_number)]

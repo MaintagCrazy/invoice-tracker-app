@@ -58,6 +58,10 @@ class Page:
 class Inv:
     def query_metadata_pages(s, *, filters):
         if ST.get("lookup_exc"): raise ST["lookup_exc"]
+        from ksef2.infra.mappers.invoices import to_spec
+        spec=to_spec(filters); ST["last_spec"]=spec
+        assert spec.sellerNip is None, "KSeF 21405: sellerNip must be null for Subject1"
+        assert str(spec.subjectType.value)=="Subject1" and spec.invoiceNumber
         return iter([Page(ST["meta"])])
     def download_invoice(s, ksef_number): return ST["dl"]
 class Auth:
