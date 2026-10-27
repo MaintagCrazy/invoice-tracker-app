@@ -82,15 +82,18 @@ def create_invoice(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    invoice = db.create_invoice(
-        client_id=client_id,
-        description=description,
-        amount=amount,
-        currency=currency,
-        issue_date=issue_date,
-        due_date=due_date,
-        work_dates=work_dates
-    )
+    try:
+        invoice = db.create_invoice(
+            client_id=client_id,
+            description=description,
+            amount=amount,
+            currency=currency,
+            issue_date=issue_date,
+            due_date=due_date,
+            work_dates=work_dates
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Every invoice is filed in KSeF right after it is saved (legal duty). A failure
     # keeps the invoice, shows on it as KSeF Status "BLAD: ..." and in ksef_error.

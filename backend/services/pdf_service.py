@@ -37,8 +37,14 @@ def _ksef_block(company: dict, invoice_data: dict, issue_date: str) -> str:
     """Green KSeF box: QR (KOD I) with the KSeF number printed under it. Empty unless filed AND hash known."""
     number = invoice_data.get('ksef_reference') or ''
     inv_hash = invoice_data.get('ksef_hash') or ''
-    if not (number and inv_hash):
+    if not number:
         return ''
+    if not inv_hash:  # filed, but QR cannot be built yet: still print the KSeF number
+        return (
+            '<table style="width:100%;margin-top:24px;border:1px solid #008000;background:#f0fff0;"><tr>'
+            '<td style="padding:8px;"><strong style="color:#006400;">KSeF - Krajowy System e-Faktur</strong><br>'
+            f'Numer KSeF: {number}</td></tr></table>'
+        )
     import qrcode
     try:
         url = ksef_qr_url(company['nip'], issue_date, inv_hash, config.KSEF_ENVIRONMENT)
