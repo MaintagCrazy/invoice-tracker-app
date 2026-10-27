@@ -345,6 +345,54 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     }
 
 
+class KsefFilingError(RuntimeError):
+    """Filing failed; the reason is already stored on the invoice as KSeF Status."""
+
+
+def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
+    """File one invoice in KSeF and store number, status and QR hash on its row.
+
+    Duplicate guard: an invoice that already has a KSeF number is never filed again.
+    Failure is never swallowed: the reason is written to the invoice's KSeF Status
+    ("BLAD: ...", visible in the list) and KsefFilingError is raised. The XML is
+    only ever filed once, so the hash returned is that of the filed bytes.
+    """
+    if invoice.get("ksef_reference"):
+        return invoice
+    file_number = invoice["file_number"]
+    try:
+        result = submit_invoice_to_ksef(invoice, client)
+        if not result.get("ksef_number"):
+            raise RuntimeError(f"KSeF returned no number (status: {result.get('ksef_status')})")
+    except Exception as e:
+        logger.error(f"KSeF filing failed for invoice {invoice.get('invoice_number')}: {e}")
+        try:
+            db.update_invoice(file_number, {"ksef_status": f"BLAD: {e}"[:200]})
+        except Exception as save_err:
+            logger.error(f"Could not store KSeF failure on invoice {file_number}: {save_err}")
+        raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {e}") from e
+    updates = {
+        "ksef_reference": result["ksef_number"],
+        "ksef_status": result.get("ksef_status", "submitted"),
+        "ksef_hash": result.get("invoice_hash", ""),
+    }
+    if not db.update_invoice(file_number, updates):
+        # Filed but not saved: shout, the number is the only proof it was filed.
+        raise KsefFilingError(
+            f"Invoice {invoice.get('invoice_number')} WAS filed in KSeF (number {result['ksef_number']}, "
+            f"hash {updates['ksef_hash']}) but saving it to the sheet failed. Record it manually."
+        )
+    return {**invoice, **updates}
+
+
+def ensure_filed(db, invoice_id: int) -> dict:
+    """Return the invoice with a KSeF number, filing it first if needed (raises KsefFilingError)."""
+    invoice = db.get_invoice(invoice_id)
+    if not invoice:
+        raise ValueError(f"Invoice #{invoice_id} not found")
+    return file_invoice_in_ksef(db, invoice, invoice.get("client") or {})
+
+
 def _render_xml(faktura) -> str:
     """Serialize the Faktura to FA(3) XML.
 

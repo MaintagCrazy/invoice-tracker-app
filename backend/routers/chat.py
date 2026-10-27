@@ -305,12 +305,22 @@ async def confirm_action(conversation_id: str):
                 work_dates=args.get("work_dates")
             )
             ai_service.clear_conversation(conversation_id)
+            from services.ksef_service import file_invoice_in_ksef, KsefFilingError
+            ksef_error = None
+            try:
+                invoice = file_invoice_in_ksef(db, invoice, client)
+            except KsefFilingError as e:
+                ksef_error = str(e)
+            msg = f"Invoice {invoice['invoice_number']} created and filed in KSeF ({invoice['ksef_reference']})."
+            if ksef_error:
+                msg = f"Invoice {invoice['invoice_number']} created but NOT filed in KSeF: {ksef_error}"
             return {
                 "success": True,
                 "action_type": "invoice",
                 "invoice_id": invoice["id"],
                 "invoice_number": invoice["invoice_number"],
-                "message": f"Invoice {invoice['invoice_number']} created successfully!"
+                "ksef_error": ksef_error,
+                "message": msg
             }
 
         elif function_name == "record_payment":

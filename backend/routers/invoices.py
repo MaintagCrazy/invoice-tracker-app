@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from services.sheets_database import get_sheets_db
+from services.ksef_service import file_invoice_in_ksef, KsefFilingError
 from services.pdf_service import get_pdf_service, WEASYPRINT_AVAILABLE
 from services.drive_storage import get_drive_service, drive_filename
 
@@ -89,6 +90,14 @@ def create_invoice(
         due_date=due_date,
         work_dates=work_dates
     )
+
+    # Every invoice is filed in KSeF right after it is saved (legal duty). A failure
+    # keeps the invoice, shows on it as KSeF Status "BLAD: ..." and in ksef_error.
+    try:
+        invoice = file_invoice_in_ksef(db, invoice, client)
+    except KsefFilingError as e:
+        invoice["ksef_error"] = str(e)
+        invoice["ksef_status"] = f"BLAD: {e}"[:200]
 
     # Auto-upload PDF to Google Drive (non-blocking -- don't fail creation)
     try:
