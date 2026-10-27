@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from models.schemas import SendEmailRequest
 from services.sheets_database import get_sheets_db
+from fastapi.concurrency import run_in_threadpool
 from services.ksef_service import ensure_filed, KsefFilingError
 from services.pdf_service import get_pdf_service
 from services.email_service import get_email_service
@@ -127,7 +128,10 @@ def send_invoice_sync(
     failed = sum(1 for r in results if not r.get("success"))
     succeeded = [r.get("recipient") for r in results if r.get("success")]
     if sent:
-        db.update_invoice_status(invoice_id, "sent")
+        try:
+            db.update_invoice_status(invoice_id, "sent")
+        except ValueError as e:  # the email is out; say why the status did not change
+            logger.error(f"Invoice {invoice_id} emailed but status not updated: {e}")
 
     logger.info(f"[chat] Invoice {invoice_id} email: {sent} sent, {failed} failed")
 
@@ -173,7 +177,8 @@ async def send_invoice(
     if not db.get_invoice(invoice_id):
         raise HTTPException(status_code=404, detail="Invoice not found")
     try:
-        invoice = ensure_filed(db, invoice_id)
+        # blocking KSeF call (up to ~60s): keep it off the event loop
+        invoice = await run_in_threadpool(ensure_filed, db, invoice_id)
     except KsefFilingError as e:
         raise HTTPException(status_code=502, detail=f"Email NOT sent. {e}")
 

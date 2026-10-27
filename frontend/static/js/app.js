@@ -260,6 +260,17 @@ function getPaymentStatusClass(status) {
     }
 }
 
+function ksefBadge(inv) {
+    const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    if (inv.ksef_reference) {
+        return `<span class="ml-1 px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-700" title="KSeF ${esc(inv.ksef_reference)}">KSeF ${esc(inv.ksef_reference)}</span>`;
+    }
+    if (inv.ksef_status) {
+        return `<span class="ml-1 px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-700" title="${esc(inv.ksef_status)}">KSeF: ${esc(inv.ksef_status)}</span>`;
+    }
+    return '';
+}
+
 function renderInvoices() {
     if (invoices.length === 0) {
         invoiceTable.innerHTML = `
@@ -282,7 +293,7 @@ function renderInvoices() {
         return `
         <tr class="${rowBg} hover:bg-gray-50">
             <td class="col-inv px-3 py-3 text-sm truncate">
-                <span class="font-medium ${textMuted}">${inv.invoice_number}</span>
+                <span class="font-medium ${textMuted}">${inv.invoice_number}</span>${ksefBadge(inv)}
             </td>
             <td class="col-client px-3 py-3 text-sm truncate">
                 <button onclick="filterByClientName('${(inv.client?.name || '').replace(/'/g, "\\'")}')" class="${isPaid ? 'text-gray-500' : 'text-blue-600 hover:text-blue-800'} hover:underline text-left truncate block w-full">
@@ -708,7 +719,7 @@ sendBtn.addEventListener('click', async () => {
             loadInvoices();
             loadStats();
         } else {
-            alert(`Error: ${result.message || 'Failed to send invoice'}`);
+            alert(`Error: ${result.detail || result.message || 'Failed to send invoice'}`);
         }
     } catch (error) {
         console.error('Error sending invoice:', error);
@@ -943,7 +954,7 @@ async function showClientDetail(clientId) {
         } else {
             invoicesTable.innerHTML = data.invoices.map(inv => `
                 <tr class="bg-white">
-                    <td class="px-4 py-2 font-medium">${inv.invoice_number}</td>
+                    <td class="px-4 py-2 font-medium">${inv.invoice_number}${ksefBadge(inv)}</td>
                     <td class="px-4 py-2 text-gray-500">${formatDate(inv.issue_date)}</td>
                     <td class="px-4 py-2">${formatCurrency(inv.amount, inv.currency)}</td>
                     <td class="px-4 py-2 text-green-600">${formatCurrency(inv.amount_paid || 0, inv.currency)}</td>

@@ -7,7 +7,8 @@ Token and company details come from config.py.
 import base64
 import hashlib
 import logging
-from datetime import datetime
+import threading
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -66,15 +67,46 @@ def _dec(value) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def _detect_country(company_id: str) -> str:
-    """Detect country code from VAT/tax ID."""
-    cid = (company_id or "").strip().upper()
+def _detect_country(company_id: str) -> Optional[str]:
+    """Country from the VAT/tax id, or None when it cannot be told (empty id, unknown
+    prefix). Never guesses Poland: a German buyer without an id used to be filed with
+    23% Polish VAT."""
+    cid = (company_id or "").strip().upper().replace(" ", "").replace("-", "")
+    if not cid:
+        return None
     if cid.startswith("CHE"):
         return "CH"
     for prefix, country in COUNTRY_FROM_VAT.items():
         if cid.startswith(prefix) and len(prefix) == 2:
             return country
-    return "PL"  # default
+    if cid.isdigit() and len(cid) == 10:
+        return "PL"  # bare Polish NIP
+    return None
+
+
+# KSeF is mandatory for invoices issued from this date; older ones are never auto-filed.
+KSEF_START = date(2026, 4, 1)
+
+
+def parse_issue_date(date_str) -> Optional[date]:
+    """Strict date parse (DD.MM.YYYY, YYYY-MM-DD, DD/MM/YYYY); None when unreadable.
+    Never falls back to today."""
+    if isinstance(date_str, datetime):
+        return date_str.date()
+    if isinstance(date_str, date):
+        return date_str
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime((date_str or "").strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def ksef_required(invoice: dict) -> bool:
+    """True when the invoice has a valid issue date on or after 01.04.2026."""
+    d = parse_issue_date(invoice.get("issue_date"))
+    return bool(d and d >= KSEF_START)
 
 
 def _parse_date(date_str: str) -> tuple:
@@ -138,6 +170,14 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
 
     company = config.COMPANY
     buyer_country = _detect_country(client.get("company_id", ""))
+    if not buyer_country:
+        raise ValueError(
+            f"Buyer '{client.get('name', '')}' has no usable VAT id / country "
+            f"(Company ID '{client.get('company_id', '')}'): cannot choose the VAT treatment. "
+            "Add the buyer's VAT id to the client first."
+        )
+    if not parse_issue_date(invoice.get("issue_date")):
+        raise ValueError(f"Invoice issue date '{invoice.get('issue_date')}' is not a valid date.")
     tax_rate_enum, tax_multiplier = _get_tax_rate(buyer_country)
 
     amount = _dec(invoice["amount"])
@@ -302,70 +342,90 @@ def xml_hash_b64url(xml_bytes: bytes) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(xml_bytes).digest()).decode().rstrip("=")
 
 
-def backfill_ksef_hashes(db) -> list:
-    """For invoices already filed (KSeF number, no hash): download the filed XML from
-    KSeF by number (read-only on KSeF) and store the hash of those exact bytes.
-    Returns one result dict per invoice; a failure on one never stops the rest."""
-    if not _ksef2_available:
-        raise RuntimeError("ksef2 SDK not installed")
-    todo = [i for i in db.get_invoices() if i.get("ksef_reference") and not i.get("ksef_hash")]
-    if not todo:
-        return []
+def _std_to_url(b64: str) -> str:
+    """KSeF reports hashes as standard base64; the QR wants base64url without padding."""
+    return (b64 or "").replace("+", "-").replace("/", "_").rstrip("=")
+
+
+class KsefFilingError(RuntimeError):
+    """Filing failed or cannot be done; the reason is shown on the invoice."""
+
+
+class KsefPendingError(RuntimeError):
+    """KSeF has the invoice but did not finish in time (SDK polling timeout)."""
+
+    def __init__(self, reference: str):
+        super().__init__(f"KSeF is still processing the invoice (reference {reference})")
+        self.reference = reference
+
+
+def _auth():
     env = Environment.PRODUCTION if config.KSEF_ENVIRONMENT == "production" else Environment.TEST
-    auth = KsefClient(env).authentication.with_token(ksef_token=config.KSEF_TOKEN, nip=config.COMPANY["nip"])
-    results = []
-    for inv in todo:
-        number = inv["ksef_reference"]
-        try:
-            h = xml_hash_b64url(auth.invoices.download_invoice(ksef_number=number))
-            saved = db.update_invoice(inv["file_number"], {"ksef_hash": h})
-            results.append({"invoice_number": inv["invoice_number"], "ksef_number": number, "hash": h, "saved": bool(saved)})
-        except Exception as e:
-            logger.error(f"Hash backfill failed for {number}: {e}")
-            results.append({"invoice_number": inv["invoice_number"], "ksef_number": number, "error": str(e)})
-    return results
+    return KsefClient(env).authentication.with_token(ksef_token=config.KSEF_TOKEN, nip=config.COMPANY["nip"])
+
+
+def _metadata(auth, invoice: dict, ksef_number: Optional[str] = None):
+    """KSeF's own record (ksef_number + invoiceHash) of this seller invoice, or None.
+    Read-only query; never raises (None = could not confirm)."""
+    try:
+        from ksef2.models import InvoicesFilter
+        d = parse_issue_date(invoice.get("issue_date"))
+        filters = InvoicesFilter.for_seller(
+            date_from=d.isoformat(), date_to=(d + timedelta(days=1)).isoformat(),
+            seller_nip=config.COMPANY["nip"], invoice_number=invoice["invoice_number"],
+        )
+        for m in auth.invoices.all_metadata(filters=filters):
+            if (ksef_number and m.ksef_number == ksef_number) or (
+                not ksef_number and getattr(m, "invoice_number", None) == invoice["invoice_number"]
+            ):
+                return m
+    except Exception as e:
+        logger.warning(f"KSeF metadata query failed for {invoice.get('invoice_number')}: {e}")
+    return None
+
+
+def _duplicate_number(exc) -> Optional[str]:
+    """originalKsefNumber when KSeF rejected the invoice as a duplicate (status 440)."""
+    if getattr(exc, "invoice_status_code", None) == 440:
+        ext = getattr(exc, "extensions", None) or {}
+        return ext.get("originalKsefNumber") or ext.get("original_ksef_number")
+    return None
 
 
 def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     """
     Build FA(3) and submit to KSeF production.
 
-    Returns:
-        dict with ksef_number, ksef_status, reference_number, etc.
+    Returns dict with ksef_number, ksef_status, invoice_hash (hash of the bytes WE sent;
+    empty when KSeF already held the invoice, then the caller reads KSeF's own hash).
+    Raises KsefPendingError on an SDK polling timeout (KSeF may well have accepted it).
+    A 440 duplicate rejection is returned as success using originalKsefNumber.
     """
     if not _ksef2_available:
         raise RuntimeError("ksef2 SDK not installed — run: pip install ksef2")
-
-    token = config.KSEF_TOKEN
-    nip = config.COMPANY["nip"]
-
-    if not token:
+    if not config.KSEF_TOKEN:
         raise RuntimeError("KSEF_TOKEN not configured")
 
-    faktura = build_faktura(invoice, client)
+    xml_bytes = _render_xml(build_faktura(invoice, client)).encode("utf-8")
+    logger.info(f"Submitting invoice {invoice['invoice_number']} to KSeF (NIP: {config.COMPANY['nip']})")
 
-    # Serialize to XML bytes
-    xml_str = _render_xml(faktura)
-    xml_bytes = xml_str.encode("utf-8")
+    auth = _auth()
+    try:
+        with auth.online_session(form_code=FormSchema.FA3) as session:
+            result = session.send_invoice_and_wait(invoice_xml=xml_bytes)
+    except Exception as e:
+        original = _duplicate_number(e)
+        if original:
+            return {"ksef_number": original, "ksef_status": "Duplikat (440): numer pierwotnej faktury",
+                    "invoice_hash": "", "invoice_number": invoice["invoice_number"]}
+        if "Timeout" in type(e).__name__ or isinstance(e, TimeoutError):
+            raise KsefPendingError(getattr(e, "invoice_reference_number", "") or "?") from e
+        raise
 
-    logger.info(f"Submitting invoice {invoice['invoice_number']} to KSeF (NIP: {nip})")
-
-    env = Environment.PRODUCTION if config.KSEF_ENVIRONMENT == "production" else Environment.TEST
-    ksef_client = KsefClient(env)
-    auth = ksef_client.authentication.with_token(ksef_token=token, nip=nip)
-
-    with auth.online_session(form_code=FormSchema.FA3) as session:
-        result = session.send_invoice_and_wait(invoice_xml=xml_bytes)
-
-    logger.info(
-        f"KSeF submission complete: ksef_number={result.ksef_number}, "
-        f"reference={result.reference_number}, status={result.status.description}"
-    )
-
+    logger.info(f"KSeF submission complete: ksef_number={result.ksef_number}, status={result.status.description}")
     return {
         "ksef_number": result.ksef_number,
         "reference_number": result.reference_number,
-        # SHA-256 of the exact filed bytes, base64url: the QR (KOD I) is built from it
         "invoice_hash": xml_hash_b64url(xml_bytes),
         "ksef_status": result.status.description,
         "ksef_status_code": result.status.code,
@@ -374,52 +434,145 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     }
 
 
-class KsefFilingError(RuntimeError):
-    """Filing failed; the reason is already stored on the invoice as KSeF Status."""
+_locks: dict = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(file_number: int) -> threading.Lock:
+    with _locks_guard:
+        return _locks.setdefault(file_number, threading.Lock())
+
+
+def _store_error(db, file_number: int, text: str):
+    """Show the reason on the invoice; the sheet layer refuses to overwrite a stored KSeF number."""
+    try:
+        db.update_invoice(file_number, {"ksef_status": text[:200]})
+    except Exception as e:
+        logger.error(f"Could not store KSeF status on invoice {file_number}: {e}")
 
 
 def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
     """File one invoice in KSeF and store number, status and QR hash on its row.
 
-    Duplicate guard: an invoice that already has a KSeF number is never filed again.
-    Failure is never swallowed: the reason is written to the invoice's KSeF Status
-    ("BLAD: ...", visible in the list) and KsefFilingError is raised. The XML is
-    only ever filed once, so the hash returned is that of the filed bytes.
+    - Only invoices with a valid issue date on/after 01.04.2026 are filed; others are returned as is.
+    - File # must be unique in the sheet, the buyer must have a usable VAT id.
+    - One filing at a time per invoice (lock); the invoice is re-read inside the lock, and one
+      that already has a KSeF number is never filed again (duplicate guard).
+    - A previous attempt that timed out is recovered from KSeF (metadata) before anything is re-sent;
+      a 440 duplicate answer is treated as the original's number.
+    - Failure is never swallowed: the reason is stored as KSeF Status ("BLAD: ...") and
+      KsefFilingError is raised; a stored KSeF number is never overwritten.
     """
-    if invoice.get("ksef_reference"):
-        return invoice
-    file_number = invoice["file_number"]
+    fn = invoice["file_number"]
     try:
-        result = submit_invoice_to_ksef(invoice, client)
-        if not result.get("ksef_number"):
-            raise RuntimeError(f"KSeF returned no number (status: {result.get('ksef_status')})")
-    except Exception as e:
-        logger.error(f"KSeF filing failed for invoice {invoice.get('invoice_number')}: {e}")
+        db._find_row(fn)  # raises when File # is on several rows
+    except ValueError as e:
+        raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} NOT filed: {e}") from e
+    if not ksef_required(invoice):
+        return invoice
+
+    with _lock_for(fn):
+        fresh = db.get_invoice(fn) or invoice
+        if fresh.get("ksef_reference"):
+            return {**invoice, **fresh}
+        client = client or fresh.get("client") or {}
+        if not _detect_country(client.get("company_id", "")):
+            msg = (f"Buyer '{client.get('name', '')}' has no usable VAT id / country "
+                   f"(Company ID '{client.get('company_id', '')}'); add it, then file again.")
+            _store_error(db, fn, f"BLAD: {msg}")
+            raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {msg}")
+
         try:
-            db.update_invoice(file_number, {"ksef_status": f"BLAD: {e}"[:200]})
-        except Exception as save_err:
-            logger.error(f"Could not store KSeF failure on invoice {file_number}: {save_err}")
-        raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {e}") from e
-    updates = {
-        "ksef_reference": result["ksef_number"],
-        "ksef_status": result.get("ksef_status", "submitted"),
-        "ksef_hash": result.get("invoice_hash", ""),
-    }
-    if not db.update_invoice(file_number, updates):
+            # an earlier attempt left a marker/error: ask KSeF whether it actually took the invoice
+            if fresh.get("ksef_status") and _ksef2_available and config.KSEF_TOKEN:
+                m = _metadata(_auth(), fresh)
+                if m:
+                    return _save(db, fresh, m.ksef_number, "Sukces (odzyskano z KSeF)", _std_to_url(m.invoice_hash))
+            _store_error(db, fn, "W TOKU: wysylanie do KSeF")
+            try:
+                result = submit_invoice_to_ksef(fresh, client)
+            except KsefPendingError as p:
+                _store_error(db, fn, f"W TOKU: KSeF jeszcze przetwarza (ref {p.reference}); wyslij ponownie pozniej")
+                m = _metadata(_auth(), fresh)
+                if not m:
+                    raise KsefFilingError(
+                        f"Invoice {invoice.get('invoice_number')} sent to KSeF but not confirmed yet "
+                        f"(reference {p.reference}). Do NOT file it again by hand; try sending again later, "
+                        "the app will pick up the KSeF number.") from p
+                result = {"ksef_number": m.ksef_number, "ksef_status": "Sukces (odzyskano z KSeF)",
+                          "invoice_hash": _std_to_url(m.invoice_hash)}
+            if not result.get("ksef_number"):
+                raise RuntimeError(f"KSeF returned no number (status: {result.get('ksef_status')})")
+            h = result.get("invoice_hash") or ""
+            if not h:  # duplicate answer: the hash must be KSeF's own, never ours
+                m = _metadata(_auth(), fresh, ksef_number=result["ksef_number"])
+                h = _std_to_url(m.invoice_hash) if m else ""
+            return _save(db, fresh, result["ksef_number"], result.get("ksef_status", "submitted"), h)
+        except KsefFilingError:
+            raise
+        except Exception as e:
+            logger.error(f"KSeF filing failed for invoice {invoice.get('invoice_number')}: {e}")
+            _store_error(db, fn, f"BLAD: {e}")
+            raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {e}") from e
+
+
+def _save(db, invoice: dict, number: str, status: str, hash_url: str) -> dict:
+    updates = {"ksef_reference": number, "ksef_status": status, "ksef_hash": hash_url}
+    if not db.update_invoice(invoice["file_number"], updates):
         # Filed but not saved: shout, the number is the only proof it was filed.
         raise KsefFilingError(
-            f"Invoice {invoice.get('invoice_number')} WAS filed in KSeF (number {result['ksef_number']}, "
-            f"hash {updates['ksef_hash']}) but saving it to the sheet failed. Record it manually."
-        )
+            f"Invoice {invoice.get('invoice_number')} WAS filed in KSeF (number {number}, hash {hash_url}) "
+            "but saving it to the sheet failed. Record it manually.")
     return {**invoice, **updates}
 
 
 def ensure_filed(db, invoice_id: int) -> dict:
-    """Return the invoice with a KSeF number, filing it first if needed (raises KsefFilingError)."""
+    """Return the invoice with a KSeF number, filing it first if needed (raises KsefFilingError).
+    Invoices that predate KSeF (or have no valid date) are returned as they are."""
     invoice = db.get_invoice(invoice_id)
     if not invoice:
         raise ValueError(f"Invoice #{invoice_id} not found")
     return file_invoice_in_ksef(db, invoice, invoice.get("client") or {})
+
+
+def require_filed_to_send(invoice: dict) -> None:
+    """Raise KsefFilingError when a KSeF-liable invoice has no KSeF number (gate for 'sent')."""
+    if ksef_required(invoice) and not invoice.get("ksef_reference"):
+        raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is not filed in KSeF; it cannot be marked or sent.")
+
+
+def backfill_ksef_hashes(db) -> list:
+    """For invoices already filed (KSeF number, no hash): download the filed XML from KSeF by
+    number (read-only), cross-check its hash with KSeF's own invoiceHash, store it only on a
+    match. A failure on one never stops the rest."""
+    if not _ksef2_available:
+        raise RuntimeError("ksef2 SDK not installed")
+    todo = [i for i in db.get_invoices() if i.get("ksef_reference") and not i.get("ksef_hash")]
+    if not todo:
+        return []
+    results = []
+    try:
+        auth = _auth()
+    except Exception as e:
+        logger.error(f"KSeF login failed for backfill: {e}")
+        return [{"invoice_number": i["invoice_number"], "ksef_number": i["ksef_reference"], "error": f"KSeF login failed: {e}"} for i in todo]
+    for inv in todo:
+        number = inv["ksef_reference"]
+        row = {"invoice_number": inv["invoice_number"], "ksef_number": number}
+        try:
+            h = xml_hash_b64url(auth.invoices.download_invoice(ksef_number=number))
+            m = _metadata(auth, inv, ksef_number=number)
+            if not m:
+                row["error"] = "could not read KSeF's own hash to cross-check; not stored"
+            elif _std_to_url(m.invoice_hash) != h:
+                row["error"] = f"downloaded XML hash {h} != KSeF invoiceHash {_std_to_url(m.invoice_hash)}; not stored"
+            else:
+                row.update(hash=h, saved=bool(db.update_invoice(inv["file_number"], {"ksef_hash": h})))
+        except Exception as e:
+            logger.error(f"Hash backfill failed for {number}: {e}")
+            row["error"] = str(e)
+        results.append(row)
+    return results
 
 
 def _render_xml(faktura) -> str:

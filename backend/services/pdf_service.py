@@ -25,8 +25,12 @@ except ImportError:
 
 def ksef_qr_url(nip: str, issue_date: str, invoice_hash: str, environment: str = "production") -> str:
     """KOD I link: https://<qr host>/invoice/<seller NIP>/<DD-MM-YYYY of P_1>/<base64url SHA-256 of the XML>."""
+    from services.ksef_service import parse_issue_date
+    d = parse_issue_date(issue_date)
+    if not d:
+        raise ValueError(f"Cannot build the KSeF QR: issue date {issue_date!r} is not a valid date")
     host = "qr.ksef.mf.gov.pl" if environment == "production" else "qr-test.ksef.mf.gov.pl"
-    return f"https://{host}/invoice/{nip}/{issue_date.replace('.', '-')}/{invoice_hash}"
+    return f"https://{host}/invoice/{nip}/{d:%d-%m-%Y}/{invoice_hash}"
 
 
 def _ksef_block(company: dict, invoice_data: dict, issue_date: str) -> str:
@@ -36,7 +40,12 @@ def _ksef_block(company: dict, invoice_data: dict, issue_date: str) -> str:
     if not (number and inv_hash):
         return ''
     import qrcode
-    url = ksef_qr_url(company['nip'], issue_date, inv_hash, config.KSEF_ENVIRONMENT)
+    try:
+        url = ksef_qr_url(company['nip'], issue_date, inv_hash, config.KSEF_ENVIRONMENT)
+    except ValueError as e:
+        logger.error(str(e))
+        return ''
+
     buf = io.BytesIO()
     qrcode.make(url, box_size=4, border=1).save(buf, format='PNG')
     b64 = base64.b64encode(buf.getvalue()).decode()

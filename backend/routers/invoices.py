@@ -7,7 +7,8 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from services.sheets_database import get_sheets_db
-from services.ksef_service import file_invoice_in_ksef, KsefFilingError
+from services.ksef_service import file_invoice_in_ksef, KsefFilingError, require_filed_to_send
+from services.sheets_database import InvoiceLocked, DuplicateFileNumber
 from services.pdf_service import get_pdf_service, WEASYPRINT_AVAILABLE
 from services.drive_storage import get_drive_service, drive_filename
 
@@ -313,7 +314,14 @@ def patch_invoice(invoice_id: int, data: InvoicePatchRequest):
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    success = db.update_invoice(invoice_id, updates)
+    try:
+        if updates.get("status") == "sent":
+            inv = db.get_invoice(invoice_id)
+            if inv:
+                require_filed_to_send(inv)
+        success = db.update_invoice(invoice_id, updates)
+    except (InvoiceLocked, DuplicateFileNumber, KsefFilingError) as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if not success:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -324,7 +332,10 @@ def patch_invoice(invoice_id: int, data: InvoicePatchRequest):
 def delete_invoice(invoice_id: int):
     """Soft-delete an invoice (moves to trash, restorable for 30 days)"""
     db = get_sheets_db()
-    success = db.delete_invoice(invoice_id)
+    try:
+        success = db.delete_invoice(invoice_id)
+    except (InvoiceLocked, DuplicateFileNumber) as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if not success:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return {"success": True, "invoice_id": invoice_id}
@@ -346,7 +357,10 @@ def restore_invoice(invoice_id: int):
 def mark_invoice_paid(invoice_id: int):
     """Mark an invoice as paid"""
     db = get_sheets_db()
-    success = db.update_invoice_status(invoice_id, "paid")
+    try:
+        success = db.update_invoice_status(invoice_id, "paid")
+    except DuplicateFileNumber as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if not success:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return {"success": True, "status": "paid"}
@@ -356,7 +370,13 @@ def mark_invoice_paid(invoice_id: int):
 def mark_invoice_sent(invoice_id: int):
     """Mark an invoice as sent"""
     db = get_sheets_db()
-    success = db.update_invoice_status(invoice_id, "sent")
+    inv = db.get_invoice(invoice_id)
+    try:
+        if inv:
+            require_filed_to_send(inv)
+        success = db.update_invoice_status(invoice_id, "sent")
+    except (DuplicateFileNumber, KsefFilingError) as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if not success:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return {"success": True, "status": "sent"}
