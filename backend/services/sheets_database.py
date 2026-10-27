@@ -83,6 +83,10 @@ SEED_CLIENTS = [
 ]
 
 
+import threading as _threading
+_CREATE_LOCK = _threading.Lock()
+
+
 class DuplicateFileNumber(ValueError):
     """The same File # sits on more than one sheet row; a write by File # would hit the wrong row."""
 
@@ -442,11 +446,14 @@ class SheetsDatabaseService:
         return None
 
     def get_next_file_number(self) -> int:
-        """Get next available file number"""
-        invoices = self.get_invoices()
-        if not invoices:
-            return 1
-        return max(inv['file_number'] for inv in invoices) + 1
+        """Next File #: highest in the sheet INCLUDING deleted rows, so a number is never
+        reused. Reads the sheet directly and raises if it cannot (never defaults to 1)."""
+        nums = []
+        for r in self.db_worksheet.get_all_records():
+            v = str(r.get('File #', '')).strip()
+            if v.isdigit():
+                nums.append(int(v))
+        return max(nums, default=0) + 1
 
     def get_next_invoice_number(self) -> str:
         """Generate invoice number: XX/MM/YYYY
@@ -494,7 +501,15 @@ class SheetsDatabaseService:
 
         return f"{next_seq:02d}/{now.month:02d}/{now.year}"
 
-    def create_invoice(
+    def create_invoice(self, *args, **kwargs) -> Dict:
+        """Create new invoice in sheet (one at a time, so two creates never share a File #)."""
+        amount = kwargs.get("amount", args[2] if len(args) > 2 else None)
+        if amount is None or float(amount) <= 0:
+            raise ValueError("Invoice amount must be greater than 0.")
+        with _CREATE_LOCK:
+            return self._create_invoice_locked(*args, **kwargs)
+
+    def _create_invoice_locked(
         self,
         client_id: int,
         description: str,
