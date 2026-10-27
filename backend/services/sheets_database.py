@@ -154,11 +154,22 @@ class SheetsDatabaseService:
             self._init_clients_worksheet()
             self._init_zus_worksheet()
             self._ensure_deleted_at_column()
+            self._ensure_ksef_hash_column()
             logger.info(f"Connected to Google Sheet: {SHEET_ID}")
 
         except Exception as e:
             logger.error(f"Failed to connect to Google Sheets: {e}")
             raise
+
+    def _ensure_ksef_hash_column(self):
+        """Ensure header 'KSeF Hash' exists in column O (15): the QR hash lives there."""
+        try:
+            headers = self.db_worksheet.row_values(1)
+            if len(headers) < 15 or headers[14] != "KSeF Hash":
+                self.db_worksheet.update_cell(1, 15, "KSeF Hash")
+                logger.info("Added 'KSeF Hash' column header to Database sheet")
+        except Exception as e:
+            logger.warning(f"Could not ensure 'KSeF Hash' column: {e}")
 
     def _ensure_deleted_at_column(self):
         """Ensure the Database sheet has a 'Deleted At' header in column L (12)"""

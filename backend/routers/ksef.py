@@ -163,6 +163,17 @@ def get_ksef_status(invoice_id: int):
     }
 
 
+@router.post("/backfill-hashes")
+def backfill_hashes():
+    """Store the QR hash for invoices filed before hashes were kept. Downloads the
+    filed XML from KSeF (read-only there) and writes only the KSeF Hash column."""
+    from services.ksef_service import backfill_ksef_hashes
+    try:
+        return {"results": backfill_ksef_hashes(get_sheets_db())}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 @router.get("/health")
 def ksef_health():
     """

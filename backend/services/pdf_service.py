@@ -44,8 +44,8 @@ def _ksef_block(company: dict, invoice_data: dict, issue_date: str) -> str:
         '<table style="width:100%;margin-top:24px;border:1px solid #008000;background:#f0fff0;"><tr>'
         '<td style="padding:8px;vertical-align:top;"><strong style="color:#006400;">KSeF - Krajowy System e-Faktur</strong><br>'
         f'Numer KSeF: {number}</td>'
-        f'<td style="padding:8px;width:110px;text-align:center;"><img src="data:image/png;base64,{b64}" style="width:90px;height:90px;"><br>'
-        f'<span style="font-size:7px;">{number}</span></td></tr></table>'
+        f'<td style="padding:8px;width:230px;text-align:center;"><img src="data:image/png;base64,{b64}" style="width:90px;height:90px;"><br>'
+        f'<span style="font-size:7px;white-space:nowrap;">{number}</span></td></tr></table>'
     )
 
 

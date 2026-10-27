@@ -297,6 +297,35 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
     return faktura
 
 
+def xml_hash_b64url(xml_bytes: bytes) -> str:
+    """SHA-256 of the exact invoice XML, base64url without padding (the QR 'wyroznik')."""
+    return base64.urlsafe_b64encode(hashlib.sha256(xml_bytes).digest()).decode().rstrip("=")
+
+
+def backfill_ksef_hashes(db) -> list:
+    """For invoices already filed (KSeF number, no hash): download the filed XML from
+    KSeF by number (read-only on KSeF) and store the hash of those exact bytes.
+    Returns one result dict per invoice; a failure on one never stops the rest."""
+    if not _ksef2_available:
+        raise RuntimeError("ksef2 SDK not installed")
+    todo = [i for i in db.get_invoices() if i.get("ksef_reference") and not i.get("ksef_hash")]
+    if not todo:
+        return []
+    env = Environment.PRODUCTION if config.KSEF_ENVIRONMENT == "production" else Environment.TEST
+    auth = KsefClient(env).authentication.with_token(ksef_token=config.KSEF_TOKEN, nip=config.COMPANY["nip"])
+    results = []
+    for inv in todo:
+        number = inv["ksef_reference"]
+        try:
+            h = xml_hash_b64url(auth.invoices.download_invoice(ksef_number=number))
+            saved = db.update_invoice(inv["file_number"], {"ksef_hash": h})
+            results.append({"invoice_number": inv["invoice_number"], "ksef_number": number, "hash": h, "saved": bool(saved)})
+        except Exception as e:
+            logger.error(f"Hash backfill failed for {number}: {e}")
+            results.append({"invoice_number": inv["invoice_number"], "ksef_number": number, "error": str(e)})
+    return results
+
+
 def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     """
     Build FA(3) and submit to KSeF production.
@@ -337,7 +366,7 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
         "ksef_number": result.ksef_number,
         "reference_number": result.reference_number,
         # SHA-256 of the exact filed bytes, base64url: the QR (KOD I) is built from it
-        "invoice_hash": base64.urlsafe_b64encode(hashlib.sha256(xml_bytes).digest()).decode().rstrip("="),
+        "invoice_hash": xml_hash_b64url(xml_bytes),
         "ksef_status": result.status.description,
         "ksef_status_code": result.status.code,
         "invoice_number": invoice["invoice_number"],
