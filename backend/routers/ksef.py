@@ -112,6 +112,7 @@ def submit_to_ksef(invoice_id: int, body: Optional[KsefSubmitRequest] = None):
             if result.get("ksef_number"):
                 updates["ksef_reference"] = result["ksef_number"]
                 updates["ksef_status"] = result.get("ksef_status", "submitted")
+                updates["ksef_hash"] = result.get("invoice_hash", "")
             if updates:
                 reference_saved = bool(db.update_invoice(invoice_id, updates))
                 if not reference_saved:

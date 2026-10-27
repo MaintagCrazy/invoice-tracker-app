@@ -384,7 +384,9 @@ class SheetsDatabaseService:
                     # KSeF filing is irreversible, so its reference is the only
                     # proof the invoice was filed — and what stops it being filed twice.
                     "ksef_reference": row.get('KSeF Reference', ''),
-                    "ksef_status": row.get('KSeF Status', '')
+                    "ksef_status": row.get('KSeF Status', ''),
+                    # base64url SHA-256 of the filed XML: needed for the QR on the PDF
+                    "ksef_hash": row.get('KSeF Hash', '')
                 }
                 invoices.append(invoice)
 
@@ -553,6 +555,7 @@ class SheetsDatabaseService:
         "status": 10,           # J
         "ksef_reference": 13,   # M
         "ksef_status": 14,      # N
+        "ksef_hash": 15,        # O (header "KSeF Hash")
     }
 
     def update_invoice(self, file_number: int, updates: Dict[str, Any]) -> bool:

@@ -4,6 +4,8 @@ KSeF 2.0 Service — Submit invoices to Poland's National e-Invoice System.
 Maps invoice-tracker-app data to FA(3) schema and submits via ksef2 SDK.
 Token and company details come from config.py.
 """
+import base64
+import hashlib
 import logging
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -334,6 +336,8 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     return {
         "ksef_number": result.ksef_number,
         "reference_number": result.reference_number,
+        # SHA-256 of the exact filed bytes, base64url: the QR (KOD I) is built from it
+        "invoice_hash": base64.urlsafe_b64encode(hashlib.sha256(xml_bytes).digest()).decode().rstrip("="),
         "ksef_status": result.status.description,
         "ksef_status_code": result.status.code,
         "invoice_number": invoice["invoice_number"],

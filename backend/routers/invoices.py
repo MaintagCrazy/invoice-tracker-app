@@ -100,7 +100,9 @@ def create_invoice(
                 "amount": invoice['amount'],
                 "currency": invoice['currency'],
                 "issue_date": invoice['issue_date'],
-                "due_date": invoice['due_date']
+                "due_date": invoice['due_date'],
+                "ksef_reference": invoice.get('ksef_reference', ''),
+                "ksef_hash": invoice.get('ksef_hash', '')
             }
             client_data = {
                 "name": client.get('name', ''),
@@ -161,7 +163,9 @@ def preview_invoice_html(invoice_id: int):
         "amount": invoice['amount'],
         "currency": invoice['currency'],
         "issue_date": invoice['issue_date'],
-        "due_date": invoice['due_date']
+        "due_date": invoice['due_date'],
+        "ksef_reference": invoice.get('ksef_reference', ''),
+        "ksef_hash": invoice.get('ksef_hash', '')
     }
 
     client = invoice.get('client', {})
@@ -191,7 +195,9 @@ def download_invoice_pdf(invoice_id: int):
         "amount": invoice['amount'],
         "currency": invoice['currency'],
         "issue_date": invoice['issue_date'],
-        "due_date": invoice['due_date']
+        "due_date": invoice['due_date'],
+        "ksef_reference": invoice.get('ksef_reference', ''),
+        "ksef_hash": invoice.get('ksef_hash', '')
     }
 
     client = invoice.get('client', {})

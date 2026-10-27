@@ -3,6 +3,7 @@ PDF generation service using WeasyPrint
 """
 import os
 import io
+import base64
 import logging
 from datetime import date
 from typing import Optional
@@ -20,6 +21,32 @@ except ImportError:
     WEASYPRINT_AVAILABLE = False
     HTML = None
     FontConfiguration = None
+
+
+def ksef_qr_url(nip: str, issue_date: str, invoice_hash: str, environment: str = "production") -> str:
+    """KOD I link: https://<qr host>/invoice/<seller NIP>/<DD-MM-YYYY of P_1>/<base64url SHA-256 of the XML>."""
+    host = "qr.ksef.mf.gov.pl" if environment == "production" else "qr-test.ksef.mf.gov.pl"
+    return f"https://{host}/invoice/{nip}/{issue_date.replace('.', '-')}/{invoice_hash}"
+
+
+def _ksef_block(company: dict, invoice_data: dict, issue_date: str) -> str:
+    """Green KSeF box: QR (KOD I) with the KSeF number printed under it. Empty unless filed AND hash known."""
+    number = invoice_data.get('ksef_reference') or ''
+    inv_hash = invoice_data.get('ksef_hash') or ''
+    if not (number and inv_hash):
+        return ''
+    import qrcode
+    url = ksef_qr_url(company['nip'], issue_date, inv_hash, config.KSEF_ENVIRONMENT)
+    buf = io.BytesIO()
+    qrcode.make(url, box_size=4, border=1).save(buf, format='PNG')
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return (
+        '<table style="width:100%;margin-top:24px;border:1px solid #008000;background:#f0fff0;"><tr>'
+        '<td style="padding:8px;vertical-align:top;"><strong style="color:#006400;">KSeF - Krajowy System e-Faktur</strong><br>'
+        f'Numer KSeF: {number}</td>'
+        f'<td style="padding:8px;width:110px;text-align:center;"><img src="data:image/png;base64,{b64}" style="width:90px;height:90px;"><br>'
+        f'<span style="font-size:7px;">{number}</span></td></tr></table>'
+    )
 
 
 class PDFService:
@@ -44,6 +71,8 @@ class PDFService:
             issue_date = issue_date.strftime("%d.%m.%Y")
         if isinstance(due_date, date):
             due_date = due_date.strftime("%d.%m.%Y")
+
+        ksef_block = _ksef_block(self.company, invoice_data, issue_date or '')
 
         # Client address with line breaks
         client_address = client_data.get('address', '').replace('\n', '<br>')
@@ -129,6 +158,7 @@ class PDFService:
             </tr>
         </tbody>
     </table>
+    {ksef_block}
 </body>
 </html>
 """
