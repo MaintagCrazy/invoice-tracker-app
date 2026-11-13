@@ -30,6 +30,7 @@ try:
         Tpodmiot1, Tpodmiot2, Tadres,
         TkodWaluty, TrodzajFaktury, TstawkaPodatku, TformaPlatnosci, TkodyKrajowUe,
         TrachunekBankowy, FakturaPodmiot2Jst, FakturaPodmiot2Gv,
+        FakturaFaDaneFaKorygowanej, TtypKorekty,
     )
     from ksef2.infra.schema.fa3.models.elementarne_typy_danych_v10_0_e import Twybor12, Twybor1
     from ksef2.infra.schema.fa3.models.kody_krajow_v10_0_e import TkodKraju
@@ -164,17 +165,68 @@ def _get_country_enum(country_code: str) -> "TkodKraju":
         return TkodKraju.PL
 
 
+def _split_amount(amount: Decimal, buyer_country: str) -> tuple:
+    """(net, vat, gross) of an amount as the app stores it: gross for a Polish buyer (23%),
+    net = gross for EU (np I) and export (0 EX)."""
+    if buyer_country == "PL":
+        net = (amount / Decimal("1.23")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return net, amount - net, amount
+    return amount, Decimal("0.00"), amount
+
+
+# FA(3) TypKorekty the app offers (TTypKorekty in schemat.xsd): 1 = effect at the date the
+# original invoice was recorded (an error on the original), 2 = effect at the date the
+# correction is issued (a change agreed after the invoice). 3 ("other date, per line") is not offered.
+CORRECTION_TYPES = {1: "VALUE_1", 2: "VALUE_2"}
+
+
+def correction_problem(invoice: dict) -> Optional[str]:
+    """Reason a correction invoice (one carrying a 'correction' block) must not be built or
+    filed, or None. The block is attached by sheets_database from the linked original."""
+    c = invoice.get("correction") or {}
+    if c.get("error"):
+        return c["error"]
+    for key in ("original_invoice_number", "original_issue_date", "original_ksef_reference",
+                "amount_before", "amount_after"):
+        if c.get(key) in (None, ""):
+            return f"correction has no {key.replace('_', ' ')}"
+    if not parse_issue_date(c["original_issue_date"]):
+        return f"original issue date {c['original_issue_date']!r} is not readable"
+    try:
+        before, after, diff = _dec(c["amount_before"]), _dec(c["amount_after"]), _dec(invoice["amount"])
+    except Exception:
+        return "correction amounts are not numbers"
+    if diff == 0:
+        return "the correction changes nothing (difference 0.00)"
+    if after < 0:
+        return f"the new total {after} would be negative"
+    if after - before != diff:
+        return f"stored difference {diff} does not equal {after} - {before}"
+    if int(c.get("type") or 0) not in CORRECTION_TYPES:
+        return f"correction type {c.get('type')!r} is not supported (1 or 2)"
+    return None
+
+
 def build_faktura(invoice: dict, client: dict) -> "Faktura":
     """
     Build a KSeF FA(3) Faktura object from invoice-tracker-app data.
 
     Args:
         invoice: dict with keys from sheets_database (invoice_number, amount,
-                 currency, issue_date, due_date, description, work_dates)
+                 currency, issue_date, due_date, description, work_dates).
+                 A correction invoice also carries invoice["correction"] (see
+                 sheets_database._link_corrections) and is built as RodzajFaktury KOR.
         client:  dict with keys (name, address, company_id, email)
 
     Returns:
         Faktura object ready for XML serialization and KSeF submission.
+
+    Corrections follow the Ministry's "Broszura informacyjna dotycząca struktury logicznej
+    FA(3)" (sierpień 2026): every field is given as it stands after the correction, the tax
+    base, tax and total (P_13_x, P_14_x, P_15) as the difference; DaneFaKorygowanej carries the
+    original's P_1, P_2 and KSeF number (NrKSeF=1); the line is shown before (StanPrzed=1) and
+    after the correction as two rows (Przykład 23, metoda druga), both numbered 1 with one shared
+    UU_ID, exactly as the Ministry's sample file for this case (FA_3_Przykład_2.xml) does.
     """
     if not _ksef2_available:
         raise RuntimeError("ksef2 SDK not installed")
@@ -189,24 +241,32 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
         )
     if not parse_issue_date(invoice.get("issue_date")):
         raise ValueError(f"Invoice issue date '{invoice.get('issue_date')}' is not a valid date.")
+    correction = invoice.get("correction")
+    if correction is not None:
+        problem = correction_problem(invoice)
+        if problem:
+            raise ValueError(f"Correction {invoice.get('invoice_number')} cannot be built: {problem}.")
     tax_rate_enum, tax_multiplier = _get_tax_rate(buyer_country)
 
-    amount = _dec(invoice["amount"])
     currency = invoice.get("currency", "EUR")
 
     # For PL domestic: amount is gross, derive net + VAT
     # For EU/export: amount is net (no VAT)
-    if buyer_country == "PL":
-        gross = amount
-        net = (gross / Decimal("1.23")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        vat = gross - net
+    if correction is None:
+        net, vat, gross = _split_amount(_dec(invoice["amount"]), buyer_country)
     else:
-        net = amount
-        vat = Decimal("0.00")
-        gross = net
+        # each state is split on its own, so before + difference == after to the cent
+        net_b, vat_b, gross_b = _split_amount(_dec(correction["amount_before"]), buyer_country)
+        net_a, vat_a, gross_a = _split_amount(_dec(correction["amount_after"]), buyer_country)
+        net, vat, gross = net_a - net_b, vat_a - vat_b, gross_a - gross_b
 
     issue_y, issue_m, issue_d = _parse_date(invoice.get("issue_date", ""))
     due_y, due_m, due_d = _parse_date(invoice.get("due_date", ""))
+    # P_6 is the date the service was done: on a correction it stays the original's
+    if correction is None:
+        p6_y, p6_m, p6_d = issue_y, issue_m, issue_d
+    else:
+        p6_y, p6_m, p6_d = _parse_date(correction["original_issue_date"])
 
     now = datetime.now()
 
@@ -277,6 +337,44 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
         pmarzy=FakturaFaAdnotacjePmarzy(p_pmarzy_n=Twybor1.VALUE_1),
     )
 
+    # ── Lines (FaWiersz) ──────────────────────────────────────
+    def _line(nr: int, l_net: Decimal, l_vat: Decimal, before: bool = False, uu_id: Optional[str] = None) -> "FakturaFaFaWiersz":
+        return FakturaFaFaWiersz(
+            nr_wiersza_fa=nr,
+            uu_id=uu_id,
+            p_7=invoice.get("description", "Services"),
+            p_8_a="usł.",
+            p_8_b=Decimal("1"),
+            p_9_a=l_net,
+            p_11=l_net,
+            p_11_vat=l_vat,
+            p_12=tax_rate_enum,
+            stan_przed=Twybor1.VALUE_1 if before else None,
+        )
+
+    kor_kwargs = {}
+    if correction is None:
+        rows = [_line(1, net, vat)]
+        rodzaj = TrodzajFaktury.VAT
+    else:
+        # As the Ministry's own sample for this case (FA_3_Przykład_2.xml): the before row and the
+        # after row both carry line number 1 and one shared UU_ID naming the corrected line. The
+        # original has no UU_ID, so it is derived from its KSeF number (same id on every correction).
+        line_id = f"{correction['original_ksef_reference']}-1"[:50]
+        rows = [_line(1, net_b, vat_b, before=True, uu_id=line_id), _line(1, net_a, vat_a, uu_id=line_id)]
+        rodzaj = TrodzajFaktury.KOR
+        oy, om, od = _parse_date(correction["original_issue_date"])
+        kor_kwargs = dict(
+            przyczyna_korekty=(correction.get("reason") or "").strip()[:256] or None,
+            typ_korekty=getattr(TtypKorekty, CORRECTION_TYPES[int(correction["type"])]),
+            dane_fa_korygowanej=[FakturaFaDaneFaKorygowanej(
+                data_wyst_fa_korygowanej=f"{oy:04d}-{om:02d}-{od:02d}",
+                nr_fa_korygowanej=correction["original_invoice_number"],
+                nr_kse_f=Twybor1.VALUE_1,
+                nr_kse_ffa_korygowanej=correction["original_ksef_reference"],
+            )],
+        )
+
     # ── Build the Faktura ─────────────────────────────────────
     faktura = Faktura(
         naglowek=Tnaglowek(
@@ -308,22 +406,11 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
             kod_waluty=_get_ksef_currency(currency),
             p_1=XmlDate(issue_y, issue_m, issue_d),
             p_2=invoice["invoice_number"],
-            p_6=XmlDate(issue_y, issue_m, issue_d),
+            p_6=XmlDate(p6_y, p6_m, p6_d),
             p_15=gross,
-            rodzaj_faktury=TrodzajFaktury.VAT,
+            rodzaj_faktury=rodzaj,
             adnotacje=adnotacje,
-            fa_wiersz=[
-                FakturaFaFaWiersz(
-                    nr_wiersza_fa=1,
-                    p_7=invoice.get("description", "Services"),
-                    p_8_a="us\u0142.",
-                    p_8_b=Decimal("1"),
-                    p_9_a=net,
-                    p_11=net,
-                    p_11_vat=vat,
-                    p_12=tax_rate_enum,
-                ),
-            ],
+            fa_wiersz=rows,
             platnosc=FakturaFaPlatnosc(
                 # 6 = Przelew (bank transfer). Was 2 = Karta (card), which
                 # contradicted the IBAN/SWIFT block on the same invoice.
@@ -342,10 +429,124 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
                 ],
             ),
             **tax_summary,
+            **kor_kwargs,
         ),
     )
 
     return faktura
+
+
+def render_faktura_xml(invoice: dict, client: dict) -> bytes:
+    """The exact FA(3) XML bytes the app would send for this invoice (in memory, nothing sent)."""
+    return _render_xml(build_faktura(invoice, client)).encode("utf-8")
+
+
+_FA3_SCHEMA = None
+_FA3_SCHEMA_GUARD = threading.Lock()
+
+
+def _fa3_schema():
+    """The official FA(3) XSD shipped in the pinned ksef2 (infra/schema/fa3/definitions/schemat.xsd);
+    its imports are local files, and the parser never touches the network."""
+    global _FA3_SCHEMA
+    with _FA3_SCHEMA_GUARD:
+        if _FA3_SCHEMA is None:
+            from importlib.resources import files
+            from lxml import etree
+            path = files("ksef2") / "infra" / "schema" / "fa3" / "definitions" / "schemat.xsd"
+            parser = etree.XMLParser(no_network=True, resolve_entities=False)
+            _FA3_SCHEMA = etree.XMLSchema(etree.parse(str(path), parser))
+        return _FA3_SCHEMA
+
+
+def download_filed_xml(ksef_number: str) -> bytes:
+    """The invoice XML exactly as KSeF holds it, by KSeF number (read-only; files nothing)."""
+    if not _ksef2_available:
+        raise RuntimeError("ksef2 SDK not installed")
+    return _auth().invoices.download_invoice(ksef_number=ksef_number)
+
+
+def _fa3_leaves(root, *path) -> dict:
+    """{'A/B/C': text} for every leaf under the element at `path` (local names, namespace-free)."""
+    node = root
+    for name in path:
+        found = [c for c in node if isinstance(c.tag, str) and c.tag.split("}")[-1] == name]
+        if not found:
+            return {}
+        node = found[0]
+    out = {}
+
+    def walk(el, prefix):
+        kids = [c for c in el if isinstance(c.tag, str)]
+        if not kids:
+            out[prefix] = (el.text or "").strip()
+        for c in kids:
+            walk(c, f"{prefix}/{c.tag.split('}')[-1]}")
+    walk(node, "/".join(path))
+    return out
+
+
+def compare_with_filed_original(correction_xml: bytes, original_xml: bytes,
+                                expected_before: Optional[Decimal] = None) -> list:
+    """Differences between a correction and the original as filed in KSeF, in what must stay
+    the same: seller, buyer (identity and address), currency, the line's description, unit and
+    tax rate, payment terms; DaneFaKorygowanej must name the filed P_1/P_2; and, when no other
+    correction came before, the value before must be the filed P_15. [] means consistent."""
+    from lxml import etree
+    parser = etree.XMLParser(no_network=True, resolve_entities=False)
+    try:
+        kor = etree.fromstring(correction_xml, parser)
+        org = etree.fromstring(original_xml, parser)
+    except Exception as e:
+        return [f"the filed original could not be read as XML ({type(e).__name__}: {e})"]
+    diffs = []
+
+    def same(label, a: dict, b: dict):
+        for key in sorted(set(a) | set(b)):
+            if a.get(key, "") != b.get(key, ""):
+                diffs.append(f"{label} {key}: filed {a.get(key, '')!r}, correction {b.get(key, '')!r}")
+
+    same("seller", _fa3_leaves(org, "Podmiot1"), _fa3_leaves(kor, "Podmiot1"))
+    same("buyer", _fa3_leaves(org, "Podmiot2"), _fa3_leaves(kor, "Podmiot2"))
+    same("currency", _fa3_leaves(org, "Fa", "KodWaluty"), _fa3_leaves(kor, "Fa", "KodWaluty"))
+    same("payment", _fa3_leaves(org, "Fa", "Platnosc"), _fa3_leaves(kor, "Fa", "Platnosc"))
+    of = _fa3_leaves(org, "Fa")
+    kd = _fa3_leaves(kor, "Fa", "DaneFaKorygowanej")
+    if not of:
+        diffs.append("the filed original has no Fa element")
+    if of.get("Fa/P_2") != kd.get("Fa/DaneFaKorygowanej/NrFaKorygowanej"):
+        diffs.append(f"original number: filed {of.get('Fa/P_2')!r}, correction names {kd.get('Fa/DaneFaKorygowanej/NrFaKorygowanej')!r}")
+    if of.get("Fa/P_1") != kd.get("Fa/DaneFaKorygowanej/DataWystFaKorygowanej"):
+        diffs.append(f"original issue date: filed {of.get('Fa/P_1')!r}, correction names {kd.get('Fa/DaneFaKorygowanej/DataWystFaKorygowanej')!r}")
+    org_rows = [r for r in org.iter() if isinstance(r.tag, str) and r.tag.split("}")[-1] == "FaWiersz"]
+    kor_rows = [r for r in kor.iter() if isinstance(r.tag, str) and r.tag.split("}")[-1] == "FaWiersz"]
+    if len(org_rows) != 1:
+        diffs.append(f"the filed original has {len(org_rows)} lines; only single-line invoices are corrected here")
+    elif kor_rows:
+        pick = lambda row: {k.split("/")[-1]: v for k, v in _fa3_leaves(row).items() if k.split("/")[-1] in ("P_7", "P_8A", "P_12")}
+        same("line", pick(org_rows[0]), pick(kor_rows[-1]))
+    if expected_before is not None:
+        try:
+            filed_total = Decimal(of.get("Fa/P_15", ""))
+        except Exception:
+            filed_total = None
+        if filed_total != _dec(expected_before):
+            diffs.append(f"value before: filed P_15 {of.get('Fa/P_15')!r}, the app has {_dec(expected_before)}")
+    return diffs
+
+
+def validate_fa3_xml(xml_bytes: bytes) -> list:
+    """Errors of the XML against the official FA(3) XSD; [] means valid. A schema that cannot be
+    loaded is reported as an error, never as valid."""
+    try:
+        from lxml import etree
+        schema = _fa3_schema()
+        doc = etree.fromstring(xml_bytes, etree.XMLParser(no_network=True, resolve_entities=False))
+    except Exception as e:
+        return [f"XSD validation could not run: {type(e).__name__}: {e}"]
+    if schema.validate(doc):
+        return []
+    return [f"line {err.line}: {err.message}" for err in schema.error_log]
 
 
 def xml_hash_b64url(xml_bytes: bytes) -> str:
@@ -461,7 +662,12 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     if not config.KSEF_TOKEN:
         raise RuntimeError("KSEF_TOKEN not configured")
 
-    xml_bytes = _render_xml(build_faktura(invoice, client)).encode("utf-8")
+    xml_bytes = render_faktura_xml(invoice, client)
+    if invoice.get("correction") is not None:
+        # a correction is never sent unless its XML passes the official FA(3) XSD
+        errors = validate_fa3_xml(xml_bytes)
+        if errors:
+            raise ValueError(f"correction XML fails the FA(3) XSD: {'; '.join(errors[:3])}")
     logger.info(f"Submitting invoice {invoice['invoice_number']} to KSeF (NIP: {config.COMPANY['nip']})")
 
     auth = _auth()
@@ -496,12 +702,120 @@ def _lock_for(file_number: int) -> threading.Lock:
         return _locks.setdefault(file_number, threading.Lock())
 
 
-def _store_error(db, file_number: int, text: str):
-    """Show the reason on the invoice; the sheet layer refuses to overwrite a stored KSeF number."""
+def _store_error(db, file_number: int, text: str) -> bool:
+    """Show the reason on the invoice (best effort; True when written). The sheet layer refuses to
+    overwrite a stored KSeF number. Never used for the marker that gates a send (_mark_sending)."""
     try:
-        db.update_invoice(file_number, {"ksef_status": text[:200]})
+        return bool(db.update_invoice(file_number, {"ksef_status": text[:200]}))
     except Exception as e:
         logger.error(f"Could not store KSeF status on invoice {file_number}: {e}")
+        return False
+
+
+# KSeF Status values. SENDING is written AND read back before every send, so a row that was ever
+# sent always carries a non-empty status; NOT_SENT marks a refusal that happened before any send.
+SENDING_MARKER = "W TOKU: wysylanie do KSeF"
+NOT_SENT_PREFIX = "BLAD (nie wyslano do KSeF): "
+
+
+def never_sent(status: str) -> bool:
+    """True when the KSeF Status proves no send was ever attempted for the row."""
+    s = str(status or "").strip()
+    return not s or s.startswith(NOT_SENT_PREFIX)
+
+
+def _mark_sending(db, invoice: dict) -> None:
+    """Write SENDING_MARKER and read it back from the sheet itself. Raises KsefFilingError (and
+    nothing is sent) when either fails: a send must never happen without a trace on the row."""
+    fn = invoice["file_number"]
+    try:
+        written = db.update_invoice(fn, {"ksef_status": SENDING_MARKER})
+        found = db._find_row(fn) if written else None  # a fresh sheet read, not the cache
+        back = str(found[1].get("KSeF Status", "")) if found else ""
+    except Exception as e:
+        written, back = False, f"{type(e).__name__}: {e}"
+    if not written or back != SENDING_MARKER:
+        raise KsefFilingError(
+            f"Invoice {invoice.get('invoice_number')} is NOT filed and was NOT sent to KSeF: the sheet did not take the "
+            f"'being sent' mark ({back or 'write failed'}). Nothing reached KSeF; try again in a minute.")
+
+
+# A KSeF number the sheet did not take is kept here and in a journal file next to the app
+# (outside git, survives restarts and deploys) until it is written; every later filing attempt
+# for that invoice writes it before doing anything else.
+_SAVE_RETRY_DELAYS = (2, 5, 10)
+_UNSAVED: dict = {}
+_UNSAVED_GUARD = threading.Lock()
+
+
+def _journal_path() -> str:
+    import os
+    return os.environ.get("KSEF_JOURNAL_PATH") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "ksef_unsaved.jsonl")
+
+
+def _journal_append(record: dict) -> bool:
+    import json
+    try:
+        with open(_journal_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
+        return True
+    except Exception as e:
+        logger.critical(f"KSeF journal write failed ({_journal_path()}): {e}; record {record}")
+        return False
+
+
+def _remember_unsaved(invoice: dict, number: str, status: str, hash_url: str, error: str) -> None:
+    rec = {"file_number": invoice["file_number"], "invoice_number": invoice.get("invoice_number"),
+           "ksef_number": number, "ksef_status": status, "ksef_hash": hash_url,
+           "error": error[:300], "at": datetime.now().isoformat()}
+    with _UNSAVED_GUARD:
+        _UNSAVED[invoice["file_number"]] = rec
+        _journal_append(rec)
+    logger.critical(f"FILED BUT NOT SAVED: invoice {rec['invoice_number']} (File # {rec['file_number']}) is in KSeF as {number}; "
+                    f"kept in {_journal_path()} until the sheet takes it")
+
+
+def _unsaved_for(invoice: dict) -> Optional[dict]:
+    """A KSeF number already given for this invoice that the sheet has not taken, or None."""
+    import json
+    fn = invoice["file_number"]
+    with _UNSAVED_GUARD:
+        rec = _UNSAVED.get(fn)
+        if rec is None:
+            try:
+                with open(_journal_path(), encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            r = json.loads(line)
+                        except ValueError:
+                            continue
+                        if r.get("file_number") == fn:
+                            rec = None if r.get("saved") else r
+            except FileNotFoundError:
+                rec = None
+    if rec and rec.get("invoice_number") == invoice.get("invoice_number"):
+        return rec
+    return None
+
+
+def _forget_unsaved(invoice: dict) -> None:
+    fn = invoice["file_number"]
+    with _UNSAVED_GUARD:
+        had = _UNSAVED.pop(fn, None)
+    if had is not None or _journal_mentions(fn):
+        _journal_append({"file_number": fn, "invoice_number": invoice.get("invoice_number"), "saved": True,
+                         "at": datetime.now().isoformat()})
+
+
+def _journal_mentions(fn: int) -> bool:
+    import json
+    try:
+        with open(_journal_path(), encoding="utf-8") as f:
+            return any(json.loads(l).get("file_number") == fn for l in f if l.strip())
+    except (FileNotFoundError, ValueError):
+        return False
 
 
 def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
@@ -515,12 +829,17 @@ def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
       a 440 duplicate answer is treated as the original's number.
     - Failure is never swallowed: the reason is stored as KSeF Status ("BLAD: ...") and
       KsefFilingError is raised; a stored KSeF number is never overwritten.
+    - Nothing is sent unless the 'being sent' marker was written and read back (_mark_sending).
+    - Once KSeF has given a number, a sheet failure is reported as "WAS filed (number X)", the
+      number is kept (memory + journal) and written by the next attempt, never re-sent.
     """
     fn = invoice["file_number"]
     try:
         db._find_row(fn)  # raises when File # is on several rows
     except ValueError as e:
         raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} NOT filed: {e}") from e
+    except Exception as e:  # sheet unreadable (quota): decide nothing
+        raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} NOT filed and NOT sent: the sheet could not be read ({e}); try again in a minute.") from e
     if not ksef_required(invoice):
         return invoice
 
@@ -533,19 +852,24 @@ def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
         if not fresh:  # never decide on a stale copy
             raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} NOT filed: could not re-read it from the sheet; try again.")
         if fresh.get("ksef_reference"):
+            _forget_unsaved(fresh)
             return {**invoice, **fresh}
+        known = _unsaved_for(fresh)  # KSeF already gave a number the sheet missed: write it, send nothing
+        if known:
+            return _save(db, fresh, known["ksef_number"], known.get("ksef_status") or "Sukces", known.get("ksef_hash", ""))
         client = client or fresh.get("client") or {}
         problem = _preflight(fresh, client)
         if problem:
-            _store_error(db, fn, f"BLAD: {problem}")
+            _store_error(db, fn, f"{NOT_SENT_PREFIX}{problem}" if never_sent(fresh.get("ksef_status")) else f"BLAD: {problem}")
             raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {problem}")
 
         try:
-            if fresh.get("ksef_status"):  # an earlier attempt left a marker/error: did KSeF take it?
+            if not never_sent(fresh.get("ksef_status")):  # an earlier send left a marker/error: did KSeF take it?
                 m = _metadata(_auth(), fresh, client)
                 if m:
-                    return _save(db, fresh, m.ksef_number, "Sukces (odzyskano z KSeF)", _std_to_url(m.invoice_hash))
-            _store_error(db, fn, "W TOKU: wysylanie do KSeF")
+                    accepted = (m.ksef_number, "Sukces (odzyskano z KSeF)", _std_to_url(m.invoice_hash))
+                    return _save(db, fresh, *accepted)
+            _mark_sending(db, fresh)  # raises (and nothing is sent) unless the mark is on the row
             try:
                 result = submit_invoice_to_ksef(fresh, client)
             except (KsefPendingError, KsefDuplicateError) as p:
@@ -565,24 +889,30 @@ def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
                           "invoice_hash": _std_to_url(m.invoice_hash)}
             if not result.get("ksef_number"):
                 raise RuntimeError(f"KSeF returned no number (status: {result.get('ksef_status')})")
-            return _save(db, fresh, result["ksef_number"], result.get("ksef_status", "submitted"), result.get("invoice_hash", ""))
         except KsefFilingError:
             raise
         except Exception as e:
             logger.error(f"KSeF filing failed for invoice {invoice.get('invoice_number')}: {e}")
             _store_error(db, fn, f"BLAD: {e}")
             raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {e}") from e
+        # KSeF has accepted it: from here on nothing may say "NOT filed" (_save raises "WAS filed")
+        return _save(db, fresh, result["ksef_number"], result.get("ksef_status", "submitted"), result.get("invoice_hash", ""))
 
 
 def _preflight(invoice: dict, client: dict) -> Optional[str]:
     """Reason this invoice must not be filed, or None."""
     if not parse_issue_date(invoice.get("issue_date")):
         return f"issue date {invoice.get('issue_date')!r} is not readable; correct it first."
-    try:
-        if float(invoice.get("amount") or 0) <= 0:
-            return "amount must be greater than 0."
-    except (TypeError, ValueError):
-        return "amount is not a number."
+    if invoice.get("correction") is not None:
+        problem = correction_problem(invoice)  # a correction's amount is the (signed) difference
+        if problem:
+            return f"{problem}."
+    else:
+        try:
+            if float(invoice.get("amount") or 0) <= 0:
+                return "amount must be greater than 0."
+        except (TypeError, ValueError):
+            return "amount is not a number."
     if (invoice.get("currency") or "").upper() not in CURRENCY_MAP:
         return f"currency {invoice.get('currency')!r} is not supported for KSeF."
     if not _detect_country(client.get("company_id", "")):
@@ -592,13 +922,80 @@ def _preflight(invoice: dict, client: dict) -> Optional[str]:
 
 
 def _save(db, invoice: dict, number: str, status: str, hash_url: str) -> dict:
+    """Write the KSeF number KSeF gave, read it back, retry on any sheet error. If the sheet still
+    refuses, the number is kept (memory + journal, written by the next attempt) and the error says
+    the invoice WAS filed; it never says 'NOT filed' and never leads to a second send."""
+    import time
+    fn = invoice["file_number"]
     updates = {"ksef_reference": number, "ksef_status": status, "ksef_hash": hash_url}
-    if not db.update_invoice(invoice["file_number"], updates):
-        # Filed but not saved: shout, the number is the only proof it was filed.
-        raise KsefFilingError(
-            f"Invoice {invoice.get('invoice_number')} WAS filed in KSeF (number {number}, hash {hash_url}) "
-            "but saving it to the sheet failed. Record it manually.")
-    return {**invoice, **updates}
+    last = "unknown"
+    for attempt, delay in enumerate((0,) + tuple(_SAVE_RETRY_DELAYS)):
+        if delay:
+            time.sleep(delay)
+        try:
+            if db.update_invoice(fn, updates):
+                found = db._find_row(fn)  # read back from the sheet, not the cache
+                if found and str(found[1].get("KSeF Reference", "")).strip() == number:
+                    _forget_unsaved(invoice)
+                    return {**invoice, **updates}
+                last = "the number was not on the row when read back"
+            else:
+                last = "the sheet write failed"
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        logger.error(f"Saving KSeF number {number} for invoice {invoice.get('invoice_number')} failed (attempt {attempt + 1}): {last}")
+    _remember_unsaved(invoice, number, status, hash_url, last)
+    raise KsefFilingError(
+        f"Invoice {invoice.get('invoice_number')} WAS filed in KSeF (number {number}) but the number is not saved "
+        f"in the sheet ({last}). It is kept and written on the next try (send or file again); do NOT file it again by hand.")
+
+
+class InvoiceNotDeletable(RuntimeError):
+    """The invoice may be (or is) in KSeF, or KSeF could not be checked: it is not deleted."""
+
+
+def delete_unfiled_invoice(db, file_number: int) -> bool:
+    """Soft-delete an invoice that has no KSeF number, but only when that is safe:
+
+    - a correction, or any KSeF-liable invoice that may ever have been sent, is deleted only after
+      a KSeF lookup confirms KSeF does not hold it; when KSeF does hold it, its number is saved on
+      the row and nothing is deleted;
+    - an invoice whose send is in progress / outcome unknown (W TOKU) is never deleted: file it
+      again first; a number KSeF gave but the sheet missed is written instead of deleting.
+    Returns False when the invoice does not exist; raises InvoiceNotDeletable with the reason."""
+    inv = db.get_invoice(file_number)
+    if not inv:
+        return False
+    number = inv.get("invoice_number")
+    if inv.get("ksef_reference"):
+        raise InvoiceNotDeletable(f"Invoice {number} is filed in KSeF ({inv['ksef_reference']}) and cannot be deleted.")
+    known = _unsaved_for(inv)
+    if known:
+        try:
+            _save(db, inv, known["ksef_number"], known.get("ksef_status") or "Sukces", known.get("ksef_hash", ""))
+        except KsefFilingError:
+            pass
+        raise InvoiceNotDeletable(f"Invoice {number} IS in KSeF (number {known['ksef_number']}); it cannot be deleted.")
+    status = str(inv.get("ksef_status") or "")
+    is_correction = inv.get("correction") is not None
+    needs_lookup = is_correction or (ksef_required(inv) and parse_issue_date(inv.get("issue_date")) is not None
+                                     and not status.startswith(NOT_SENT_PREFIX))
+    if status.startswith("W TOKU"):
+        raise InvoiceNotDeletable(
+            f"Invoice {number} was being sent to KSeF and the outcome is not known yet ({status}); it is not deleted. "
+            "File it again: the app looks it up in KSeF first and never files it twice.")
+    if needs_lookup:
+        try:
+            m = _metadata(_auth(), inv, inv.get("client") or {})
+        except Exception as e:
+            raise InvoiceNotDeletable(f"Invoice {number} was not deleted: KSeF could not be checked ({e}). Try again later.") from e
+        if m:
+            try:
+                _save(db, inv, m.ksef_number, "Sukces (odzyskano z KSeF)", _std_to_url(m.invoice_hash))
+            except KsefFilingError:
+                pass
+            raise InvoiceNotDeletable(f"Invoice {number} IS in KSeF (number {m.ksef_number}); the number is now on the invoice, so it cannot be deleted.")
+    return db.delete_invoice(file_number, ksef_absence_confirmed=needs_lookup)
 
 
 def ensure_filed(db, invoice_id: int) -> dict:

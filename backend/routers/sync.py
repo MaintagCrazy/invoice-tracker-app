@@ -152,7 +152,8 @@ def drive_reset():
                 "amount": invoice['amount'],
                 "currency": invoice['currency'],
                 "issue_date": invoice['issue_date'],
-                "due_date": invoice['due_date']
+                "due_date": invoice['due_date'],
+                "correction": invoice.get('correction')
             }
             client = invoice.get('client', {})
             client_data = {
@@ -262,7 +263,8 @@ def regenerate_all_pdfs():
                 "amount": invoice['amount'],
                 "currency": invoice['currency'],
                 "issue_date": invoice['issue_date'],
-                "due_date": invoice['due_date']
+                "due_date": invoice['due_date'],
+                "correction": invoice.get('correction')
             }
             client = invoice.get('client', {})
             client_data = {
