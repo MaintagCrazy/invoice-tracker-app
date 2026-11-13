@@ -433,7 +433,9 @@ class SheetsDatabaseService:
                     "ksef_reference": row.get('KSeF Reference', ''),
                     "ksef_status": row.get('KSeF Status', ''),
                     # base64url SHA-256 of the filed XML: needed for the QR on the PDF
-                    "ksef_hash": row.get('KSeF Hash', '')
+                    "ksef_hash": row.get('KSeF Hash', ''),
+                    # what this row adds to totals (an unfiled correction adds 0, see _link_corrections)
+                    "counted_amount": amount,
                 }
                 corrects = _int_or_none(row.get(CORRECTS_HEADER))
                 if corrects is not None:
@@ -459,10 +461,11 @@ class SheetsDatabaseService:
 
         A correction row gets invoice["correction"] (the original's number, issue date, KSeF
         number, and the value before and after this correction) and owes nothing itself
-        (amount_due 0, payment_status "correction"). Its original gets corrected_amount (its
-        value after every correction that is not deleted), corrections (the list) and an
-        amount_due / payment_status computed on the corrected value, so totals and the
-        outstanding per client follow the corrected value. Rows whose link is broken get
+        (amount_due 0, payment_status "correction"). Only a correction FILED in KSeF changes
+        money: its original gets corrected_amount (its value after every filed correction) and
+        amount_due / payment_status on that value, and the correction's counted_amount is its
+        difference. An unfiled correction is listed in pending_corrections and counts 0
+        everywhere until it has a KSeF number. Rows whose link is broken get
         correction["error"], which blocks building and filing them.
         """
         by_fn: Dict[int, Dict] = {}
@@ -497,17 +500,22 @@ class SheetsDatabaseService:
                     amount_after=after,
                 )
                 if inv["status"] != "deleted":  # a deleted (never filed) correction changes nothing
-                    current[orig_fn] = after
-                    orig.setdefault("corrections", []).append({
+                    entry = {
                         "file_number": inv["file_number"],
                         "invoice_number": inv["invoice_number"],
                         "issue_date": inv["issue_date"],
                         "amount": inv["amount"],
                         "ksef_reference": inv["ksef_reference"],
-                    })
+                    }
+                    orig.setdefault("corrections", []).append(entry)
+                    if inv["ksef_reference"]:
+                        current[orig_fn] = after
+                    else:  # not in KSeF yet: shown as pending, moves no money
+                        orig.setdefault("pending_corrections", []).append(entry)
             inv["correction"] = block
             inv["amount_due"] = 0
             inv["payment_status"] = "correction"
+            inv["counted_amount"] = inv["amount"] if (inv["ksef_reference"] and not block.get("error")) else 0
 
         for orig_fn, value in current.items():
             orig = by_fn[orig_fn]
@@ -798,23 +806,25 @@ class SheetsDatabaseService:
             logger.error(f"Error updating invoice {file_number}: {e}")
             return False
 
-    def delete_invoice(self, file_number: int) -> bool:
+    def delete_invoice(self, file_number: int, ksef_absence_confirmed: bool = False) -> bool:
         """Soft-delete an invoice: set status to 'deleted' and record deletion date.
         Invoice remains in the sheet for 30 days and can be restored.
-        A filed invoice is never deleted (raises InvoiceLocked)."""
+        A filed invoice is never deleted (raises InvoiceLocked). A correction, or a row that was
+        ever sent to KSeF (its KSeF Status says so), is deleted only with ksef_absence_confirmed,
+        which only ksef_service.delete_unfiled_invoice passes, after a KSeF lookup found nothing."""
+        from services.ksef_service import never_sent
         found = self._find_row(file_number)  # may raise DuplicateFileNumber
         if not found:
             return False
         row_num, row = found
         if row.get('KSeF Reference'):
             raise InvoiceLocked(f"Invoice {row.get('Invoice Number')} is filed in KSeF ({row['KSeF Reference']}) and cannot be deleted.")
-        if _int_or_none(row.get(CORRECTS_HEADER)) is not None and str(row.get('KSeF Status') or '').strip():
-            # a filing was attempted (it may have reached KSeF after a timeout); deleting it would
-            # let a second correction of the same value be filed. Re-filing is safe: the app looks
-            # it up in KSeF first, and KSeF refuses the same number twice (440), which is adopted.
+        is_correction = _int_or_none(row.get(CORRECTS_HEADER)) is not None
+        if (is_correction or not never_sent(row.get('KSeF Status'))) and not ksef_absence_confirmed:
+            # it may be in KSeF (sent, or timed out): deleting it would let it be filed twice
             raise InvoiceLocked(
-                f"Correction {row.get('Invoice Number')} was already sent or tried in KSeF (status: {row.get('KSeF Status')}); "
-                "it may be in KSeF, so it is never deleted. File it again: the app looks it up in KSeF first and never files it twice.")
+                f"Invoice {row.get('Invoice Number')} may be in KSeF (status: {row.get('KSeF Status') or 'none'}); "
+                "it is deleted only after a KSeF lookup confirms it is not there (use the app's delete, which checks KSeF).")
         try:
             self.db_worksheet.update_cell(row_num, 10, "deleted")
             self.db_worksheet.update_cell(row_num, 12, datetime.now().isoformat())
@@ -935,7 +945,7 @@ class SheetsDatabaseService:
         draft = sum(1 for i in invoices if i['status'] == 'draft')
         sent = sum(1 for i in invoices if i['status'] == 'sent')
         paid = sum(1 for i in invoices if i['status'] == 'paid')
-        total_amount = sum(i['amount'] for i in invoices)
+        total_amount = sum(i['counted_amount'] for i in invoices)
         total_paid = sum(i['amount_paid'] for i in invoices)
         total_due = sum(i['amount_due'] for i in invoices)
 
@@ -945,7 +955,7 @@ class SheetsDatabaseService:
         due_by_client = {}
         for inv in invoices:
             client_name = inv['client']['name'] if inv['client'] else 'Unknown'
-            by_client[client_name] = by_client.get(client_name, 0) + inv['amount']
+            by_client[client_name] = by_client.get(client_name, 0) + inv['counted_amount']
             due_by_client[client_name] = due_by_client.get(client_name, 0) + inv['amount_due']
 
         return {
@@ -1139,7 +1149,7 @@ class SheetsDatabaseService:
         # Get all payments for this client
         payments = self.get_payments(client_id=client_id)
 
-        total_invoiced = sum(i['amount'] for i in invoices)
+        total_invoiced = sum(i['counted_amount'] for i in invoices)
         total_paid = sum(p['amount'] for p in payments)
         total_due = total_invoiced - total_paid
 
@@ -1208,6 +1218,8 @@ class SheetsDatabaseService:
         """
         by_month: Dict[str, List[str]] = {}
         for inv in self.get_invoices():
+            if inv.get('correction') is not None:  # a correction is not new work issued that month
+                continue
             key = issue_date_month(inv.get('issue_date'))
             if not key:
                 continue

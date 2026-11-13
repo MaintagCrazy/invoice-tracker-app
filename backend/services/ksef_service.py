@@ -225,9 +225,8 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
     FA(3)" (sierpień 2026): every field is given as it stands after the correction, the tax
     base, tax and total (P_13_x, P_14_x, P_15) as the difference; DaneFaKorygowanej carries the
     original's P_1, P_2 and KSeF number (NrKSeF=1); the line is shown before (StanPrzed=1) and
-    after the correction as two rows (Przykład 23, metoda druga), numbered 1 and 2 as the StanPrzed
-    field text asks ("osobnych wierszy z odrębną numeracją", Tabela 48; the example itself repeats
-    the number; both are schema-valid).
+    after the correction as two rows (Przykład 23, metoda druga), both numbered 1 with one shared
+    UU_ID, exactly as the Ministry's sample file for this case (FA_3_Przykład_2.xml) does.
     """
     if not _ksef2_available:
         raise RuntimeError("ksef2 SDK not installed")
@@ -339,9 +338,10 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
     )
 
     # ── Lines (FaWiersz) ──────────────────────────────────────
-    def _line(nr: int, l_net: Decimal, l_vat: Decimal, before: bool = False) -> "FakturaFaFaWiersz":
+    def _line(nr: int, l_net: Decimal, l_vat: Decimal, before: bool = False, uu_id: Optional[str] = None) -> "FakturaFaFaWiersz":
         return FakturaFaFaWiersz(
             nr_wiersza_fa=nr,
+            uu_id=uu_id,
             p_7=invoice.get("description", "Services"),
             p_8_a="usł.",
             p_8_b=Decimal("1"),
@@ -357,7 +357,11 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
         rows = [_line(1, net, vat)]
         rodzaj = TrodzajFaktury.VAT
     else:
-        rows = [_line(1, net_b, vat_b, before=True), _line(2, net_a, vat_a)]
+        # As the Ministry's own sample for this case (FA_3_Przykład_2.xml): the before row and the
+        # after row both carry line number 1 and one shared UU_ID naming the corrected line. The
+        # original has no UU_ID, so it is derived from its KSeF number (same id on every correction).
+        line_id = f"{correction['original_ksef_reference']}-1"[:50]
+        rows = [_line(1, net_b, vat_b, before=True, uu_id=line_id), _line(1, net_a, vat_a, uu_id=line_id)]
         rodzaj = TrodzajFaktury.KOR
         oy, om, od = _parse_date(correction["original_issue_date"])
         kor_kwargs = dict(
@@ -698,12 +702,120 @@ def _lock_for(file_number: int) -> threading.Lock:
         return _locks.setdefault(file_number, threading.Lock())
 
 
-def _store_error(db, file_number: int, text: str):
-    """Show the reason on the invoice; the sheet layer refuses to overwrite a stored KSeF number."""
+def _store_error(db, file_number: int, text: str) -> bool:
+    """Show the reason on the invoice (best effort; True when written). The sheet layer refuses to
+    overwrite a stored KSeF number. Never used for the marker that gates a send (_mark_sending)."""
     try:
-        db.update_invoice(file_number, {"ksef_status": text[:200]})
+        return bool(db.update_invoice(file_number, {"ksef_status": text[:200]}))
     except Exception as e:
         logger.error(f"Could not store KSeF status on invoice {file_number}: {e}")
+        return False
+
+
+# KSeF Status values. SENDING is written AND read back before every send, so a row that was ever
+# sent always carries a non-empty status; NOT_SENT marks a refusal that happened before any send.
+SENDING_MARKER = "W TOKU: wysylanie do KSeF"
+NOT_SENT_PREFIX = "BLAD (nie wyslano do KSeF): "
+
+
+def never_sent(status: str) -> bool:
+    """True when the KSeF Status proves no send was ever attempted for the row."""
+    s = str(status or "").strip()
+    return not s or s.startswith(NOT_SENT_PREFIX)
+
+
+def _mark_sending(db, invoice: dict) -> None:
+    """Write SENDING_MARKER and read it back from the sheet itself. Raises KsefFilingError (and
+    nothing is sent) when either fails: a send must never happen without a trace on the row."""
+    fn = invoice["file_number"]
+    try:
+        written = db.update_invoice(fn, {"ksef_status": SENDING_MARKER})
+        found = db._find_row(fn) if written else None  # a fresh sheet read, not the cache
+        back = str(found[1].get("KSeF Status", "")) if found else ""
+    except Exception as e:
+        written, back = False, f"{type(e).__name__}: {e}"
+    if not written or back != SENDING_MARKER:
+        raise KsefFilingError(
+            f"Invoice {invoice.get('invoice_number')} is NOT filed and was NOT sent to KSeF: the sheet did not take the "
+            f"'being sent' mark ({back or 'write failed'}). Nothing reached KSeF; try again in a minute.")
+
+
+# A KSeF number the sheet did not take is kept here and in a journal file next to the app
+# (outside git, survives restarts and deploys) until it is written; every later filing attempt
+# for that invoice writes it before doing anything else.
+_SAVE_RETRY_DELAYS = (2, 5, 10)
+_UNSAVED: dict = {}
+_UNSAVED_GUARD = threading.Lock()
+
+
+def _journal_path() -> str:
+    import os
+    return os.environ.get("KSEF_JOURNAL_PATH") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "ksef_unsaved.jsonl")
+
+
+def _journal_append(record: dict) -> bool:
+    import json
+    try:
+        with open(_journal_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
+        return True
+    except Exception as e:
+        logger.critical(f"KSeF journal write failed ({_journal_path()}): {e}; record {record}")
+        return False
+
+
+def _remember_unsaved(invoice: dict, number: str, status: str, hash_url: str, error: str) -> None:
+    rec = {"file_number": invoice["file_number"], "invoice_number": invoice.get("invoice_number"),
+           "ksef_number": number, "ksef_status": status, "ksef_hash": hash_url,
+           "error": error[:300], "at": datetime.now().isoformat()}
+    with _UNSAVED_GUARD:
+        _UNSAVED[invoice["file_number"]] = rec
+        _journal_append(rec)
+    logger.critical(f"FILED BUT NOT SAVED: invoice {rec['invoice_number']} (File # {rec['file_number']}) is in KSeF as {number}; "
+                    f"kept in {_journal_path()} until the sheet takes it")
+
+
+def _unsaved_for(invoice: dict) -> Optional[dict]:
+    """A KSeF number already given for this invoice that the sheet has not taken, or None."""
+    import json
+    fn = invoice["file_number"]
+    with _UNSAVED_GUARD:
+        rec = _UNSAVED.get(fn)
+        if rec is None:
+            try:
+                with open(_journal_path(), encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            r = json.loads(line)
+                        except ValueError:
+                            continue
+                        if r.get("file_number") == fn:
+                            rec = None if r.get("saved") else r
+            except FileNotFoundError:
+                rec = None
+    if rec and rec.get("invoice_number") == invoice.get("invoice_number"):
+        return rec
+    return None
+
+
+def _forget_unsaved(invoice: dict) -> None:
+    fn = invoice["file_number"]
+    with _UNSAVED_GUARD:
+        had = _UNSAVED.pop(fn, None)
+    if had is not None or _journal_mentions(fn):
+        _journal_append({"file_number": fn, "invoice_number": invoice.get("invoice_number"), "saved": True,
+                         "at": datetime.now().isoformat()})
+
+
+def _journal_mentions(fn: int) -> bool:
+    import json
+    try:
+        with open(_journal_path(), encoding="utf-8") as f:
+            return any(json.loads(l).get("file_number") == fn for l in f if l.strip())
+    except (FileNotFoundError, ValueError):
+        return False
 
 
 def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
@@ -717,12 +829,17 @@ def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
       a 440 duplicate answer is treated as the original's number.
     - Failure is never swallowed: the reason is stored as KSeF Status ("BLAD: ...") and
       KsefFilingError is raised; a stored KSeF number is never overwritten.
+    - Nothing is sent unless the 'being sent' marker was written and read back (_mark_sending).
+    - Once KSeF has given a number, a sheet failure is reported as "WAS filed (number X)", the
+      number is kept (memory + journal) and written by the next attempt, never re-sent.
     """
     fn = invoice["file_number"]
     try:
         db._find_row(fn)  # raises when File # is on several rows
     except ValueError as e:
         raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} NOT filed: {e}") from e
+    except Exception as e:  # sheet unreadable (quota): decide nothing
+        raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} NOT filed and NOT sent: the sheet could not be read ({e}); try again in a minute.") from e
     if not ksef_required(invoice):
         return invoice
 
@@ -735,19 +852,24 @@ def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
         if not fresh:  # never decide on a stale copy
             raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} NOT filed: could not re-read it from the sheet; try again.")
         if fresh.get("ksef_reference"):
+            _forget_unsaved(fresh)
             return {**invoice, **fresh}
+        known = _unsaved_for(fresh)  # KSeF already gave a number the sheet missed: write it, send nothing
+        if known:
+            return _save(db, fresh, known["ksef_number"], known.get("ksef_status") or "Sukces", known.get("ksef_hash", ""))
         client = client or fresh.get("client") or {}
         problem = _preflight(fresh, client)
         if problem:
-            _store_error(db, fn, f"BLAD: {problem}")
+            _store_error(db, fn, f"{NOT_SENT_PREFIX}{problem}" if never_sent(fresh.get("ksef_status")) else f"BLAD: {problem}")
             raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {problem}")
 
         try:
-            if fresh.get("ksef_status"):  # an earlier attempt left a marker/error: did KSeF take it?
+            if not never_sent(fresh.get("ksef_status")):  # an earlier send left a marker/error: did KSeF take it?
                 m = _metadata(_auth(), fresh, client)
                 if m:
-                    return _save(db, fresh, m.ksef_number, "Sukces (odzyskano z KSeF)", _std_to_url(m.invoice_hash))
-            _store_error(db, fn, "W TOKU: wysylanie do KSeF")
+                    accepted = (m.ksef_number, "Sukces (odzyskano z KSeF)", _std_to_url(m.invoice_hash))
+                    return _save(db, fresh, *accepted)
+            _mark_sending(db, fresh)  # raises (and nothing is sent) unless the mark is on the row
             try:
                 result = submit_invoice_to_ksef(fresh, client)
             except (KsefPendingError, KsefDuplicateError) as p:
@@ -767,13 +889,14 @@ def file_invoice_in_ksef(db, invoice: dict, client: dict) -> dict:
                           "invoice_hash": _std_to_url(m.invoice_hash)}
             if not result.get("ksef_number"):
                 raise RuntimeError(f"KSeF returned no number (status: {result.get('ksef_status')})")
-            return _save(db, fresh, result["ksef_number"], result.get("ksef_status", "submitted"), result.get("invoice_hash", ""))
         except KsefFilingError:
             raise
         except Exception as e:
             logger.error(f"KSeF filing failed for invoice {invoice.get('invoice_number')}: {e}")
             _store_error(db, fn, f"BLAD: {e}")
             raise KsefFilingError(f"Invoice {invoice.get('invoice_number')} is NOT filed in KSeF: {e}") from e
+        # KSeF has accepted it: from here on nothing may say "NOT filed" (_save raises "WAS filed")
+        return _save(db, fresh, result["ksef_number"], result.get("ksef_status", "submitted"), result.get("invoice_hash", ""))
 
 
 def _preflight(invoice: dict, client: dict) -> Optional[str]:
@@ -799,13 +922,80 @@ def _preflight(invoice: dict, client: dict) -> Optional[str]:
 
 
 def _save(db, invoice: dict, number: str, status: str, hash_url: str) -> dict:
+    """Write the KSeF number KSeF gave, read it back, retry on any sheet error. If the sheet still
+    refuses, the number is kept (memory + journal, written by the next attempt) and the error says
+    the invoice WAS filed; it never says 'NOT filed' and never leads to a second send."""
+    import time
+    fn = invoice["file_number"]
     updates = {"ksef_reference": number, "ksef_status": status, "ksef_hash": hash_url}
-    if not db.update_invoice(invoice["file_number"], updates):
-        # Filed but not saved: shout, the number is the only proof it was filed.
-        raise KsefFilingError(
-            f"Invoice {invoice.get('invoice_number')} WAS filed in KSeF (number {number}, hash {hash_url}) "
-            "but saving it to the sheet failed. Record it manually.")
-    return {**invoice, **updates}
+    last = "unknown"
+    for attempt, delay in enumerate((0,) + tuple(_SAVE_RETRY_DELAYS)):
+        if delay:
+            time.sleep(delay)
+        try:
+            if db.update_invoice(fn, updates):
+                found = db._find_row(fn)  # read back from the sheet, not the cache
+                if found and str(found[1].get("KSeF Reference", "")).strip() == number:
+                    _forget_unsaved(invoice)
+                    return {**invoice, **updates}
+                last = "the number was not on the row when read back"
+            else:
+                last = "the sheet write failed"
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        logger.error(f"Saving KSeF number {number} for invoice {invoice.get('invoice_number')} failed (attempt {attempt + 1}): {last}")
+    _remember_unsaved(invoice, number, status, hash_url, last)
+    raise KsefFilingError(
+        f"Invoice {invoice.get('invoice_number')} WAS filed in KSeF (number {number}) but the number is not saved "
+        f"in the sheet ({last}). It is kept and written on the next try (send or file again); do NOT file it again by hand.")
+
+
+class InvoiceNotDeletable(RuntimeError):
+    """The invoice may be (or is) in KSeF, or KSeF could not be checked: it is not deleted."""
+
+
+def delete_unfiled_invoice(db, file_number: int) -> bool:
+    """Soft-delete an invoice that has no KSeF number, but only when that is safe:
+
+    - a correction, or any KSeF-liable invoice that may ever have been sent, is deleted only after
+      a KSeF lookup confirms KSeF does not hold it; when KSeF does hold it, its number is saved on
+      the row and nothing is deleted;
+    - an invoice whose send is in progress / outcome unknown (W TOKU) is never deleted: file it
+      again first; a number KSeF gave but the sheet missed is written instead of deleting.
+    Returns False when the invoice does not exist; raises InvoiceNotDeletable with the reason."""
+    inv = db.get_invoice(file_number)
+    if not inv:
+        return False
+    number = inv.get("invoice_number")
+    if inv.get("ksef_reference"):
+        raise InvoiceNotDeletable(f"Invoice {number} is filed in KSeF ({inv['ksef_reference']}) and cannot be deleted.")
+    known = _unsaved_for(inv)
+    if known:
+        try:
+            _save(db, inv, known["ksef_number"], known.get("ksef_status") or "Sukces", known.get("ksef_hash", ""))
+        except KsefFilingError:
+            pass
+        raise InvoiceNotDeletable(f"Invoice {number} IS in KSeF (number {known['ksef_number']}); it cannot be deleted.")
+    status = str(inv.get("ksef_status") or "")
+    is_correction = inv.get("correction") is not None
+    needs_lookup = is_correction or (ksef_required(inv) and parse_issue_date(inv.get("issue_date")) is not None
+                                     and not status.startswith(NOT_SENT_PREFIX))
+    if status.startswith("W TOKU"):
+        raise InvoiceNotDeletable(
+            f"Invoice {number} was being sent to KSeF and the outcome is not known yet ({status}); it is not deleted. "
+            "File it again: the app looks it up in KSeF first and never files it twice.")
+    if needs_lookup:
+        try:
+            m = _metadata(_auth(), inv, inv.get("client") or {})
+        except Exception as e:
+            raise InvoiceNotDeletable(f"Invoice {number} was not deleted: KSeF could not be checked ({e}). Try again later.") from e
+        if m:
+            try:
+                _save(db, inv, m.ksef_number, "Sukces (odzyskano z KSeF)", _std_to_url(m.invoice_hash))
+            except KsefFilingError:
+                pass
+            raise InvoiceNotDeletable(f"Invoice {number} IS in KSeF (number {m.ksef_number}); the number is now on the invoice, so it cannot be deleted.")
+    return db.delete_invoice(file_number, ksef_absence_confirmed=needs_lookup)
 
 
 def ensure_filed(db, invoice_id: int) -> dict:

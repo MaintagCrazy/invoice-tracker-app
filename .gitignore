@@ -44,3 +44,6 @@ sa_b64_value.txt
 
 # Local scratch for recoverable removals / screenshots (never committed)
 .trash/
+
+# KSeF numbers the sheet did not take yet (written back automatically)
+ksef_unsaved.jsonl

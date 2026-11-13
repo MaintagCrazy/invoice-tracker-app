@@ -414,9 +414,10 @@ def patch_invoice(invoice_id: int, data: InvoicePatchRequest):
 def delete_invoice(invoice_id: int):
     """Soft-delete an invoice (moves to trash, restorable for 30 days)"""
     db = get_sheets_db()
+    from services.ksef_service import delete_unfiled_invoice, InvoiceNotDeletable
     try:
-        success = db.delete_invoice(invoice_id)
-    except (InvoiceLocked, DuplicateFileNumber) as e:
+        success = delete_unfiled_invoice(db, invoice_id)  # checks KSeF before deleting anything that may be there
+    except (InvoiceLocked, DuplicateFileNumber, InvoiceNotDeletable) as e:
         raise HTTPException(status_code=409, detail=str(e))
     if not success:
         raise HTTPException(status_code=404, detail="Invoice not found")

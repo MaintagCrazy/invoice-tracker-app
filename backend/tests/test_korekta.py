@@ -11,6 +11,9 @@ import services.sheets_database as sdb
 import services.ksef_service as ks
 import services.correction_service as cs
 import routers.invoices as rinv, routers.email as remail, routers.ksef as rksef
+import tempfile
+os.environ["KSEF_JOURNAL_PATH"] = os.path.join(tempfile.mkdtemp(prefix="ksefjournal."), "ksef_unsaved.jsonl")
+ks._SAVE_RETRY_DELAYS = (0, 0)
 
 KER = {"id": 3, "name": "Keramint B.V.", "address": "Minister Bongaertsstraat 135, 6042 CK Roermond, Niederlande",
        "company_id": "NL851296518B01", "email": "k@example.invalid"}
@@ -80,11 +83,12 @@ def k01_xml_for_invoice_45():
     assert tag(x, "DataWystFaKorygowanej") == ["2026-11-04"] and tag(x, "NrFaKorygowanej") == ["01/11/2026"]
     assert tag(x, "NrKSeF") == ["1"] and tag(x, "NrKSeFFaKorygowanej") == [KSEF45]
     assert tag(x, "TypKorekty") == ["2"] and tag(x, "PrzyczynaKorekty") == ["Zmiana wartości usługi"]
-    assert tag(x, "NrWierszaFa") == ["1", "2"] and tag(x, "P_11") == ["17600.00", "14080.00"] and tag(x, "StanPrzed") == ["1"]
+    assert tag(x, "NrWierszaFa") == ["1", "1"] and tag(x, "UU_ID") == [KSEF45 + "-1"] * 2, "as the Ministry sample FA_3_Przyklad_2"
+    assert tag(x, "P_11") == ["17600.00", "14080.00"] and tag(x, "StanPrzed") == ["1"]
     assert tag(x, "P_12") == ["np I", "np I"] and tag(x, "P_18") == ["1"] and tag(x, "P_17") == ["2"]
     assert tag(x, "KodUE") == ["NL"] and tag(x, "NrVatUE") == ["851296518B01"] and tag(x, "FormaPlatnosci") == ["6"]
     assert tag(x, "Termin") == ["2026-12-04"] and tag(x, "P_7") == ["Bonus Baustelle Steuercampus München"] * 2
-    assert "StanPrzed" in xml_of(x).split("NrWierszaFa>2")[0], "StanPrzed sits on the before row"
+    assert "StanPrzed" in xml_of(x).split("</ns0:FaWiersz>")[0], "StanPrzed sits on the before row"
     return "XSD valid, P_15 -3520.00"
 
 
@@ -196,16 +200,18 @@ def k08_correction_row_locked_restore_refused_delete_drops():
     try: rinv.preview_correction(45, rinv.CorrectionRequest(new_amount="10000")); raise AssertionError("second while first unfiled")
     except HTTPException as e: assert e.status_code == 409 and "not filed in KSeF yet" in e.detail and "delete" not in e.detail
     # a correction whose filing was tried (timeout / error) may be in KSeF: never deleted
-    for status in ("BLAD: KSeF down", "W TOKU: KSeF jeszcze przetwarza (ref REF-T); wyslij ponownie pozniej", "BLAD: KSeF lookup failed"):
+    # (a BLAD row that a KSeF lookup confirms absent may be deleted: k24)
+    for status in ("W TOKU: wysylanie do KSeF", "W TOKU: KSeF jeszcze przetwarza (ref REF-T); wyslij ponownie pozniej"):
         db.db_worksheet.rows[-1][13] = status; db._cache_invalidate()
         try: rinv.delete_invoice(r["id"]); raise AssertionError(f"deleted a tried correction ({status})")
-        except HTTPException as e: assert e.status_code == 409 and "never deleted" in e.detail, e.detail
+        except HTTPException as e: assert e.status_code == 409 and ("outcome is not known" in e.detail or "IS in KSeF" in e.detail or "could not be checked" in e.detail or "may be in KSeF" in e.detail), e.detail
     assert db.db_worksheet.rows[-1][9] != "deleted"
     # only a correction never sent (empty KSeF status: the process stopped between save and filing) can go
     db = kdb([original(), ["Faktura 46.pdf", 46, "KOR/01/11/2026", "13.11.2026", "04.12.2026", "Keramint B.V.",
                            "Bonus Baustelle Steuercampus München", -3520.0, "EUR", "draft", "", "", "", "", "", 45, "Zmiana wartości usługi", 2]])
     db.db_worksheet.rows[0] += ["Corrects File #", "Correction Reason", "Correction Type"]; db._cache_invalidate()
-    assert db.get_invoice(45)["corrected_amount"] == 14080.0
+    assert db.get_invoice(45).get("corrected_amount") is None and db.get_invoice(45)["pending_corrections"], "unfiled: pending, no money moved"
+    assert db.get_stats()["due_by_client"]["Keramint B.V."] == 17600.0
     class AI:
         def get_pending_action(s, c): return {"function_name": "delete_invoice", "arguments": {"invoice_id": 46}}
         def clear_conversation(s, c): pass
@@ -414,6 +420,69 @@ def k21_read_back_must_match_what_was_written():
     try: rinv.create_correction(45, rinv.CorrectionRequest(new_amount="14080", confirmed=True)); raise AssertionError("filed a row that read back differently")
     except HTTPException as e: assert e.status_code == 500 and "reading it back did not match" in e.detail and "reason/type" in e.detail, e.detail
     assert not FILED, "never filed after a mismatched read-back"
+
+
+def k22_attack4_quota_at_send_start_never_sends_or_doubles():
+    """A Sheets 429 window opening as filing starts: the 'being sent' mark cannot be written, so
+    nothing is sent; no second correction can follow."""
+    db = kdb([original()]); ws = db.db_worksheet; W = {"open": False}
+    rg, ru = ws.get_all_records, ws.update_cell
+    ws.get_all_records = lambda: (_ for _ in ()).throw(RuntimeError("APIError 429 quota")) if W["open"] else rg()
+    ws.update_cell = lambda *a: (_ for _ in ()).throw(RuntimeError("APIError 429 quota")) if W["open"] else ru(*a)
+    real_pre = ks._preflight
+    def pre(inv, cl):
+        r = real_pre(inv, cl)
+        if inv.get("correction") is not None and not FILED: W["open"] = True
+        return r
+    ks._preflight = pre
+    try: out = rinv.create_correction(45, rinv.CorrectionRequest(new_amount="14080", confirmed=True))
+    finally: ks._preflight = real_pre; W["open"] = False
+    assert not FILED and not out["filed"] and "NOT sent" in out["ksef_error"], (len(FILED), out.get("ksef_error"))
+    db._cache_invalidate()
+    try: rinv.preview_correction(45, rinv.CorrectionRequest(new_amount="14080")); raise AssertionError("second correction while first unfiled")
+    except HTTPException as e: assert e.status_code == 409
+
+
+def k23_attack3_sheet_error_after_acceptance_says_was_filed_and_recovers():
+    db = kdb([original()]); ws = db.db_worksheet; real = ws.get_all_records; st = {"n": 0}
+    def flaky():
+        if FILED and st["n"] < 50: st["n"] += 1; raise RuntimeError("APIError 429 read quota")
+        return real()
+    ws.get_all_records = flaky
+    out = rinv.create_correction(45, rinv.CorrectionRequest(new_amount="14080", confirmed=True))
+    ws.get_all_records = real; db._cache_invalidate()
+    assert len(FILED) == 1 and not out["filed"], out
+    assert "WAS filed in KSeF (number 7011092699-" in out["ksef_error"] and "NOT filed" not in out["ksef_error"], out["ksef_error"]
+    row = db.db_worksheet.rows[-1]
+    assert row[13] == ks.SENDING_MARKER, "the mark written before the send stays on the row"
+    try: rinv.delete_invoice(row[1]); raise AssertionError("deleted a correction KSeF holds")
+    except HTTPException as e: assert e.status_code == 409 and "IS in KSeF" in e.detail, e.detail
+    db._cache_invalidate()
+    assert db.db_worksheet.rows[-1][12].startswith("7011092699-") and len(FILED) == 1, "number written from the journal, never re-sent"
+    assert db.get_invoice(45)["corrected_amount"] == 14080.0
+
+
+def k24_delete_needs_ksef_lookup():
+    db = kdb([original(), ["Faktura 46.pdf", 46, "KOR/01/11/2026", "13.11.2026", "04.12.2026", "Keramint B.V.",
+                           "Bonus Baustelle Steuercampus München", -3520.0, "EUR", "draft", "", "", "", "BLAD: KSeF 500", "", 45, "Zmiana wartości usługi", 2]])
+    db.db_worksheet.rows[0] += ["Corrects File #", "Correction Reason", "Correction Type"]; db._cache_invalidate()
+    raises(sdb.InvoiceLocked, db.delete_invoice, 46)  # the sheet layer alone never deletes it
+    ST["meta"] = [Meta("KOR/01/11/2026", "7011092699-20261113-ABCDEF-01", "h", gross=-3520.0, buyer="NL851296518B01")]
+    try: rinv.delete_invoice(46); raise AssertionError("deleted although KSeF has it")
+    except HTTPException as e: assert e.status_code == 409 and "IS in KSeF" in e.detail
+    db._cache_invalidate(); assert db.db_worksheet.rows[2][12] == "7011092699-20261113-ABCDEF-01", "adopted, not deleted"
+    db = kdb([original(), ["Faktura 46.pdf", 46, "KOR/01/11/2026", "13.11.2026", "04.12.2026", "Keramint B.V.",
+                           "Bonus Baustelle Steuercampus München", -3520.0, "EUR", "draft", "", "", "", "BLAD: KSeF 500", "", 45, "Zmiana wartości usługi", 2]])
+    db.db_worksheet.rows[0] += ["Corrects File #", "Correction Reason", "Correction Type"]; db._cache_invalidate()
+    ST["lookup_exc"] = RuntimeError("KSeF down")
+    try: rinv.delete_invoice(46); raise AssertionError("deleted without a lookup")
+    except HTTPException as e: assert e.status_code == 409 and "could not be checked" in e.detail
+    ST["lookup_exc"] = None; ST["meta"] = []
+    db.db_worksheet.rows[2][13] = "W TOKU: wysylanie do KSeF"; db._cache_invalidate()
+    try: rinv.delete_invoice(46); raise AssertionError("deleted while being sent")
+    except HTTPException as e: assert e.status_code == 409 and "outcome is not known" in e.detail
+    db.db_worksheet.rows[2][13] = "BLAD: KSeF 500"; db._cache_invalidate()
+    assert rinv.delete_invoice(46)["success"] and db.db_worksheet.rows[2][9] == "deleted", "absent in KSeF: deleted"
 
 
 if __name__ == "__main__":

@@ -398,7 +398,8 @@ async def confirm_action(conversation_id: str):
 
         elif function_name == "delete_invoice":
             invoice_id = int(args["invoice_id"])
-            success = db.delete_invoice(invoice_id)
+            from services.ksef_service import delete_unfiled_invoice
+            success = delete_unfiled_invoice(db, invoice_id)  # checks KSeF before deleting anything that may be there
             if not success:
                 raise HTTPException(status_code=404, detail=f"Invoice #{invoice_id} not found")
 
@@ -455,6 +456,8 @@ async def confirm_action(conversation_id: str):
             raise HTTPException(status_code=400, detail=f"Unknown action: {function_name}")
 
     except (InvoiceLocked, DuplicateFileNumber, KsefFilingError) as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:  # InvoiceNotDeletable: may be in KSeF / KSeF not checkable
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
