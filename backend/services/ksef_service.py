@@ -225,7 +225,9 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
     FA(3)" (sierpień 2026): every field is given as it stands after the correction, the tax
     base, tax and total (P_13_x, P_14_x, P_15) as the difference; DaneFaKorygowanej carries the
     original's P_1, P_2 and KSeF number (NrKSeF=1); the line is shown before (StanPrzed=1) and
-    after the correction as separate, separately numbered rows (Tabela 48, Przykład 23 metoda druga).
+    after the correction as two rows (Przykład 23, metoda druga), numbered 1 and 2 as the StanPrzed
+    field text asks ("osobnych wierszy z odrębną numeracją", Tabela 48; the example itself repeats
+    the number; both are schema-valid).
     """
     if not _ksef2_available:
         raise RuntimeError("ksef2 SDK not installed")
@@ -451,6 +453,82 @@ def _fa3_schema():
             parser = etree.XMLParser(no_network=True, resolve_entities=False)
             _FA3_SCHEMA = etree.XMLSchema(etree.parse(str(path), parser))
         return _FA3_SCHEMA
+
+
+def download_filed_xml(ksef_number: str) -> bytes:
+    """The invoice XML exactly as KSeF holds it, by KSeF number (read-only; files nothing)."""
+    if not _ksef2_available:
+        raise RuntimeError("ksef2 SDK not installed")
+    return _auth().invoices.download_invoice(ksef_number=ksef_number)
+
+
+def _fa3_leaves(root, *path) -> dict:
+    """{'A/B/C': text} for every leaf under the element at `path` (local names, namespace-free)."""
+    node = root
+    for name in path:
+        found = [c for c in node if isinstance(c.tag, str) and c.tag.split("}")[-1] == name]
+        if not found:
+            return {}
+        node = found[0]
+    out = {}
+
+    def walk(el, prefix):
+        kids = [c for c in el if isinstance(c.tag, str)]
+        if not kids:
+            out[prefix] = (el.text or "").strip()
+        for c in kids:
+            walk(c, f"{prefix}/{c.tag.split('}')[-1]}")
+    walk(node, "/".join(path))
+    return out
+
+
+def compare_with_filed_original(correction_xml: bytes, original_xml: bytes,
+                                expected_before: Optional[Decimal] = None) -> list:
+    """Differences between a correction and the original as filed in KSeF, in what must stay
+    the same: seller, buyer (identity and address), currency, the line's description, unit and
+    tax rate, payment terms; DaneFaKorygowanej must name the filed P_1/P_2; and, when no other
+    correction came before, the value before must be the filed P_15. [] means consistent."""
+    from lxml import etree
+    parser = etree.XMLParser(no_network=True, resolve_entities=False)
+    try:
+        kor = etree.fromstring(correction_xml, parser)
+        org = etree.fromstring(original_xml, parser)
+    except Exception as e:
+        return [f"the filed original could not be read as XML ({type(e).__name__}: {e})"]
+    diffs = []
+
+    def same(label, a: dict, b: dict):
+        for key in sorted(set(a) | set(b)):
+            if a.get(key, "") != b.get(key, ""):
+                diffs.append(f"{label} {key}: filed {a.get(key, '')!r}, correction {b.get(key, '')!r}")
+
+    same("seller", _fa3_leaves(org, "Podmiot1"), _fa3_leaves(kor, "Podmiot1"))
+    same("buyer", _fa3_leaves(org, "Podmiot2"), _fa3_leaves(kor, "Podmiot2"))
+    same("currency", _fa3_leaves(org, "Fa", "KodWaluty"), _fa3_leaves(kor, "Fa", "KodWaluty"))
+    same("payment", _fa3_leaves(org, "Fa", "Platnosc"), _fa3_leaves(kor, "Fa", "Platnosc"))
+    of = _fa3_leaves(org, "Fa")
+    kd = _fa3_leaves(kor, "Fa", "DaneFaKorygowanej")
+    if not of:
+        diffs.append("the filed original has no Fa element")
+    if of.get("Fa/P_2") != kd.get("Fa/DaneFaKorygowanej/NrFaKorygowanej"):
+        diffs.append(f"original number: filed {of.get('Fa/P_2')!r}, correction names {kd.get('Fa/DaneFaKorygowanej/NrFaKorygowanej')!r}")
+    if of.get("Fa/P_1") != kd.get("Fa/DaneFaKorygowanej/DataWystFaKorygowanej"):
+        diffs.append(f"original issue date: filed {of.get('Fa/P_1')!r}, correction names {kd.get('Fa/DaneFaKorygowanej/DataWystFaKorygowanej')!r}")
+    org_rows = [r for r in org.iter() if isinstance(r.tag, str) and r.tag.split("}")[-1] == "FaWiersz"]
+    kor_rows = [r for r in kor.iter() if isinstance(r.tag, str) and r.tag.split("}")[-1] == "FaWiersz"]
+    if len(org_rows) != 1:
+        diffs.append(f"the filed original has {len(org_rows)} lines; only single-line invoices are corrected here")
+    elif kor_rows:
+        pick = lambda row: {k.split("/")[-1]: v for k, v in _fa3_leaves(row).items() if k.split("/")[-1] in ("P_7", "P_8A", "P_12")}
+        same("line", pick(org_rows[0]), pick(kor_rows[-1]))
+    if expected_before is not None:
+        try:
+            filed_total = Decimal(of.get("Fa/P_15", ""))
+        except Exception:
+            filed_total = None
+        if filed_total != _dec(expected_before):
+            diffs.append(f"value before: filed P_15 {of.get('Fa/P_15')!r}, the app has {_dec(expected_before)}")
+    return diffs
 
 
 def validate_fa3_xml(xml_bytes: bytes) -> list:

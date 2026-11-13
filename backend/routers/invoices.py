@@ -314,6 +314,11 @@ class CorrectionRequest(BaseModel):
     reason: Optional[str] = None
     correction_type: int = 2
     confirmed: bool = False
+    # from the preview: when given, saving refuses if the correction changed since (number,
+    # value before or issue date, e.g. another correction meanwhile or past midnight)
+    expected_number: Optional[str] = None
+    expected_amount_before: Optional[float] = None
+    expected_issue_date: Optional[str] = None
 
 
 @router.post("/{invoice_id}/correction/preview")
@@ -339,7 +344,10 @@ def create_correction(invoice_id: int, data: CorrectionRequest):
                     'cannot be withdrawn. Check the preview, then re-send with {"confirmed": true}.'))
     db = get_sheets_db()
     try:
-        correction = correction_service.create_correction(db, invoice_id, data.new_amount, data.reason, data.correction_type)
+        correction = correction_service.create_correction(
+            db, invoice_id, data.new_amount, data.reason, data.correction_type,
+            expected={"correction_number": data.expected_number, "amount_before": data.expected_amount_before,
+                      "issue_date": data.expected_issue_date})
     except correction_service.CorrectionRefused as e:
         raise HTTPException(status_code=e.status, detail=str(e))
     except (DuplicateFileNumber, RuntimeError) as e:

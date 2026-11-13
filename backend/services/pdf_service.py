@@ -110,11 +110,15 @@ class PDFService:
             # Faktura korygująca: the original it corrects, the line before and after, the
             # difference (= this document's own total, P_15) and the invoice's new value.
             from html import escape
-            money = lambda v: f"{currency} {float(v):,.2f}"
+            # a broken link (correction["error"]) prints dashes, never invented zeros
+            money = lambda v: "-" if v in (None, "") else f"{currency} {float(v):,.2f}"
             desc = escape(str(invoice_data.get('description', '')))
             title = "FAKTURA KORYGUJACA"
             number_label = f"NR FAKTURY KORYGUJACEJ {escape(str(invoice_data.get('invoice_number', '')))}"
             reason = escape(str(corr.get('reason') or ''))
+            error_html = ""
+            if corr.get('error'):
+                error_html = '<br><strong style="color:#B00020;">BLAD: ' + escape(str(corr['error'])) + '</strong>'
             correction_block = f"""
     <table style="width: 100%; margin-bottom: 20px; border: 1px solid #3366AA; background: #F3F7FD;">
         <tr>
@@ -123,17 +127,18 @@ class PDFService:
                 &nbsp;&nbsp;<strong>z dnia:</strong> {escape(str(corr.get('original_issue_date', '')))}<br>
                 <strong>Numer KSeF faktury korygowanej:</strong> {escape(str(corr.get('original_ksef_reference', '')))}<br>
                 <strong>Przyczyna korekty:</strong> {reason}
+                {error_html}
             </td>
         </tr>
     </table>"""
             line_rows = (
                 f"""<tr>
                 <td>Stan przed korekta: {desc}</td>
-                <td class="amount">{money(corr.get('amount_before', 0))}</td>
+                <td class="amount">{money(corr.get('amount_before'))}</td>
             </tr>
             <tr>
                 <td>Stan po korekcie: {desc}</td>
-                <td class="amount">{money(corr.get('amount_after', 0))}</td>
+                <td class="amount">{money(corr.get('amount_after'))}</td>
             </tr>""" + '\n            <tr class="empty-row"><td></td><td></td></tr>' * 2)
             total_rows = f"""<tr class="total-row">
                 <td>KWOTA KOREKTY (ROZNICA)</td>
@@ -141,7 +146,7 @@ class PDFService:
             </tr>
             <tr class="total-row">
                 <td>RAZEM PO KOREKCIE</td>
-                <td class="amount">{money(corr.get('amount_after', 0))}</td>
+                <td class="amount">{money(corr.get('amount_after'))}</td>
             </tr>"""
 
         html_template = f"""

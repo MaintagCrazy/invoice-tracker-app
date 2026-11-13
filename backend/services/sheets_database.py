@@ -106,6 +106,12 @@ CORRECTION_HEADERS = (CORRECTS_HEADER, CORRECTION_REASON_HEADER, CORRECTION_TYPE
 _FIXED_HEADERS = {2: "File #", 3: "Invoice Number", 8: "Amount", 10: "Status", 13: "KSeF Reference"}
 
 
+def _cents(value) -> float:
+    """Money to cents, half-up (the rounding ksef_service._dec uses when it files)."""
+    from decimal import Decimal, ROUND_HALF_UP
+    return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def _int_or_none(value) -> Optional[int]:
     s = str(value if value is not None else "").strip()
     if s.endswith(".0"):
@@ -479,8 +485,9 @@ class SheetsDatabaseService:
             elif orig["status"] == "deleted":
                 block["error"] = f"the original invoice (File # {orig_fn}) is deleted"
             else:
-                before = current.get(orig_fn, round(orig["amount"], 2))
-                after = round(before + inv["amount"], 2)
+                # cents rounded half-up, exactly as build_faktura filed the original
+                before = current.get(orig_fn, _cents(orig["amount"]))
+                after = _cents(before + _cents(inv["amount"]))
                 block.update(
                     original_invoice_number=orig["invoice_number"],
                     original_issue_date=orig["issue_date"],
@@ -504,11 +511,16 @@ class SheetsDatabaseService:
 
         for orig_fn, value in current.items():
             orig = by_fn[orig_fn]
+            paid = _cents(orig["amount_paid"])
             orig["corrected_amount"] = value
-            orig["amount_due"] = max(0, round(value - orig["amount_paid"], 2))
-            if orig["amount_paid"] >= value:
+            orig["amount_due"] = max(0, _cents(value - paid))
+            # paid above the corrected value is owed back to the buyer: shown, never hidden
+            orig["overpaid"] = max(0, _cents(paid - value))
+            if value == 0 and paid == 0:
+                orig["payment_status"] = "corrected_to_zero"
+            elif paid >= value:
                 orig["payment_status"] = "paid"
-            elif orig["amount_paid"] > 0:
+            elif paid > 0:
                 orig["payment_status"] = "partial"
             else:
                 orig["payment_status"] = "unpaid"
@@ -690,6 +702,9 @@ class SheetsDatabaseService:
             col_count = getattr(ws, "col_count", None)
             if col_count is not None and col > col_count:
                 ws.add_cols(col - col_count)
+            elif any(str(v).strip() for v in ws.col_values(col)[1:]):
+                # data with no header: naming it would turn those rows into "corrections"
+                raise RuntimeError(f"Database sheet column {col} has data but no header; nothing written. Clear or label that column first.")
             ws.update_cell(1, col, name)
             headers.append(name)
             cols[name] = col
@@ -793,6 +808,13 @@ class SheetsDatabaseService:
         row_num, row = found
         if row.get('KSeF Reference'):
             raise InvoiceLocked(f"Invoice {row.get('Invoice Number')} is filed in KSeF ({row['KSeF Reference']}) and cannot be deleted.")
+        if _int_or_none(row.get(CORRECTS_HEADER)) is not None and str(row.get('KSeF Status') or '').strip():
+            # a filing was attempted (it may have reached KSeF after a timeout); deleting it would
+            # let a second correction of the same value be filed. Re-filing is safe: the app looks
+            # it up in KSeF first, and KSeF refuses the same number twice (440), which is adopted.
+            raise InvoiceLocked(
+                f"Correction {row.get('Invoice Number')} was already sent or tried in KSeF (status: {row.get('KSeF Status')}); "
+                "it may be in KSeF, so it is never deleted. File it again: the app looks it up in KSeF first and never files it twice.")
         try:
             self.db_worksheet.update_cell(row_num, 10, "deleted")
             self.db_worksheet.update_cell(row_num, 12, datetime.now().isoformat())

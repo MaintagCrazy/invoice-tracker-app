@@ -403,11 +403,15 @@ async def confirm_action(conversation_id: str):
                 raise HTTPException(status_code=404, detail=f"Invoice #{invoice_id} not found")
 
             ai_service.clear_conversation(conversation_id)
+            deleted = next((i for i in db.get_deleted_invoices() if i["file_number"] == invoice_id), None)
+            restorable = not (deleted and deleted.get("correction") is not None)  # a deleted correction is never restored
             return {
                 "success": True,
                 "action_type": "delete_invoice",
                 "invoice_id": invoice_id,
-                "message": f"Invoice #{invoice_id} moved to trash. You can restore it within 30 days."
+                "message": f"Invoice #{invoice_id} moved to trash. " + (
+                    "You can restore it within 30 days." if restorable else
+                    "It was a correction invoice: it cannot be restored; make a new correction if needed.")
             }
 
         elif function_name == "send_invoice_email":

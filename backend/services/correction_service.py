@@ -18,8 +18,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from services import sheets_database as sdb
-from services.ksef_service import (CORRECTION_TYPES, parse_issue_date, render_faktura_xml,
-                                   validate_fa3_xml)
+from services.ksef_service import (CORRECTION_TYPES, compare_with_filed_original, download_filed_xml,
+                                   parse_issue_date, render_faktura_xml, validate_fa3_xml)
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,12 @@ def _money(value, field: str) -> Decimal:
         raise CorrectionRefused(f"{field} {value!r} is not a number.", 400)
     if not d.is_finite():
         raise CorrectionRefused(f"{field} {value!r} is not a number.", 400)
-    q = d.quantize(Decimal("0.01"))
+    try:
+        q = d.quantize(Decimal("0.01"))
+    except InvalidOperation:  # too large to hold in cents (for example 1e30)
+        raise CorrectionRefused(f"{field} {value} is too large.", 400)
+    if abs(q) >= Decimal("1e14"):
+        raise CorrectionRefused(f"{field} {value} is too large.", 400)
     if q != d:
         raise CorrectionRefused(f"{field} {value} has more than 2 decimals.", 400)
     return q
@@ -102,16 +107,19 @@ def plan_correction(db, original_id: int, new_amount, reason: Optional[str] = No
             "an invoice that is not filed is edited directly; a correction needs the original's KSeF number.")
     if not parse_issue_date(orig.get("issue_date")):
         raise CorrectionRefused(f"Invoice {orig['invoice_number']} has no readable issue date ({orig.get('issue_date')!r}).")
+    if not parse_issue_date(orig.get("due_date")):
+        raise CorrectionRefused(f"Invoice {orig['invoice_number']} has no readable due date ({orig.get('due_date')!r}); the correction keeps the original's payment term.")
     pending = [c for c in orig.get("corrections", []) if not c.get("ksef_reference")]
     if pending:
         raise CorrectionRefused(
             f"Correction {pending[0]['invoice_number']} of this invoice is not filed in KSeF yet; "
-            "file it or delete it before making another.")
+            "file it again first (the app looks it up in KSeF before re-sending, so it is never filed twice).")
 
     new = _money(new_amount, "New amount")
     if new < 0:
         raise CorrectionRefused(f"The new total cannot be negative ({new}).", 400)
-    before = _money(round(float(orig.get("corrected_amount", orig["amount"])), 2), "Current amount")
+    # half-up cents, as the original was filed (ksef_service._dec)
+    before = _money(sdb._cents(orig.get("corrected_amount", orig["amount"])), "Current amount")
     diff = new - before
     if diff == 0:
         raise CorrectionRefused(
@@ -120,6 +128,10 @@ def plan_correction(db, original_id: int, new_amount, reason: Optional[str] = No
     reason = (reason or "").strip() or DEFAULT_REASON
     if len(reason) > 256:
         raise CorrectionRefused("The reason is longer than 256 characters (FA(3) PrzyczynaKorekty limit).", 400)
+    from gspread.utils import numericise
+    if not isinstance(numericise(reason), str):
+        # the sheet would read it back as a number ("0012" -> 12), so the filed text would differ
+        raise CorrectionRefused("The reason must be words, not a number.", 400)
     try:
         correction_type = int(correction_type)
     except (TypeError, ValueError):
@@ -135,6 +147,8 @@ def plan_correction(db, original_id: int, new_amount, reason: Optional[str] = No
     return {
         "id": None,
         "file_number": None,
+        "original_amount_paid": float(orig.get("amount_paid") or 0),
+        "prior_corrections": len(orig.get("corrections", [])),
         "invoice_number": correction_number(orig["invoice_number"], _taken_numbers(db)),
         "client_id": orig.get("client_id"),
         "client": orig.get("client") or {},
@@ -185,6 +199,8 @@ def pdf_data(invoice: dict) -> dict:
 
 def summary(plan: dict) -> dict:
     c = plan["correction"]
+    paid = plan.get("original_amount_paid")
+    refund = round(max(0.0, paid - c["amount_after"]), 2) if paid is not None else None
     return {
         "correction_number": plan["invoice_number"],
         "issue_date": plan["issue_date"],
@@ -204,6 +220,9 @@ def summary(plan: dict) -> dict:
         "reason": c["reason"],
         "correction_type": c["type"],
         "correction_type_label": TYPE_LABELS.get(c["type"], ""),
+        "amount_paid": paid,
+        # already paid above the new value: owed back to the buyer after this correction
+        "refund_due": refund,
     }
 
 
@@ -214,41 +233,94 @@ def preview_correction(db, original_id: int, new_amount, reason=None, correction
         out = render_correction(plan)
     except ValueError as e:
         raise CorrectionRefused(str(e), 400)
+    s = summary(plan)
+    warning = ("Confirming saves this correction and files it in KSeF with the Polish tax authority; "
+               "a filing is legally binding and cannot be withdrawn. Before saving, the app reads the "
+               "filed original from KSeF and refuses if seller, buyer, currency, line or payment differ.")
+    if s["refund_due"]:
+        warning += f" Already paid {s['currency']} {s['amount_paid']:,.2f}: {s['currency']} {s['refund_due']:,.2f} will be owed back to the buyer."
     return {
-        **summary(plan),
+        **s,
         "xml": out["xml"],
         "xsd_valid": not out["xsd_errors"],
         "xsd_errors": out["xsd_errors"],
         "html": out["html"],
         "pdf_base64": base64.b64encode(out["pdf_bytes"]).decode() if out["pdf_bytes"] else None,
         "files_in_ksef_on_confirm": True,
-        "warning": ("Confirming saves this correction and files it in KSeF with the Polish tax "
-                    "authority; a filing is legally binding and cannot be withdrawn."),
+        "warning": warning,
     }
 
 
-def create_correction(db, original_id: int, new_amount, reason=None, correction_type=DEFAULT_TYPE) -> dict:
-    """Write the correction row (never files: the caller files it). Re-plans on fresh sheet data
-    inside the create lock, so two corrections never get the same number or File #, and refuses
-    an XML that fails the official FA(3) XSD before anything is written. Returns the stored row."""
+def _check_expected(plan: dict, expected: Optional[dict]) -> None:
+    """Confirm must save exactly what was previewed: same number, value before and issue date."""
+    if not expected:
+        return
+    now = {"correction_number": plan["invoice_number"], "amount_before": plan["correction"]["amount_before"],
+           "issue_date": plan["issue_date"]}
+    changed = []
+    for key, value in expected.items():
+        if value is None or key not in now:
+            continue
+        a, b = now[key], value
+        if key == "amount_before":
+            same = abs(float(a) - float(b)) < 0.005
+        else:
+            same = str(a) == str(b)
+        if not same:
+            changed.append(f"{key} {b} -> {a}")
+    if changed:
+        raise CorrectionRefused(f"The correction changed since your preview ({'; '.join(changed)}); nothing saved. Preview again.")
+
+
+def create_correction(db, original_id: int, new_amount, reason=None, correction_type=DEFAULT_TYPE,
+                      expected: Optional[dict] = None) -> dict:
+    """Write the correction row (never files: the caller files it).
+
+    1. Plans it and, when `expected` is given (the preview's correction_number, amount_before and
+       issue_date), refuses if anything changed since the preview.
+    2. Reads the filed original from KSeF (read-only) and refuses if the correction's seller, buyer,
+       currency, line or payment differ from it, or (no earlier correction) its P_15 is not the
+       value before.
+    3. Inside the create lock, re-plans on fresh sheet data (so two corrections never share a
+       number or File #), requires the same plan, refuses an XML the FA(3) XSD rejects, writes.
+    4. Reads the row back and checks number, values, reason and type. Returns the stored row."""
+    db._cache_invalidate("invoices")
+    plan = plan_correction(db, original_id, new_amount, reason, correction_type)
+    _check_expected(plan, expected)
+    client = plan.get("client") or {}
+    try:
+        xml = render_faktura_xml(plan, client)
+    except ValueError as e:
+        raise CorrectionRefused(str(e), 400)
+    c = plan["correction"]
+    try:
+        filed = download_filed_xml(c["original_ksef_reference"])
+    except Exception as e:
+        raise CorrectionRefused(
+            f"Could not read the original {c['original_invoice_number']} from KSeF to check it "
+            f"({type(e).__name__}: {e}); nothing saved. Try again.", 502)
+    diffs = compare_with_filed_original(
+        xml, filed, Decimal(str(c["amount_before"])) if not plan.get("prior_corrections") else None)
+    if diffs:
+        raise CorrectionRefused(
+            "The correction would not match the original as filed in KSeF, nothing saved: " + "; ".join(diffs[:5])
+            + ". A change of buyer or seller data needs a different kind of correction (Podmiot2K/Podmiot1K), which this app does not make.", 409)
+
     with sdb._CREATE_LOCK:
         db._cache_invalidate("invoices")
-        plan = plan_correction(db, original_id, new_amount, reason, correction_type)
-        try:
-            xml = render_faktura_xml(plan, plan.get("client") or {})
-        except ValueError as e:
-            raise CorrectionRefused(str(e), 400)
+        again = plan_correction(db, original_id, new_amount, reason, correction_type, issue_date=plan["issue_date"])
+        if (again["invoice_number"], again["correction"]["amount_before"]) != (plan["invoice_number"], c["amount_before"]):
+            raise CorrectionRefused("Another correction of this invoice was made meanwhile; nothing saved. Preview again.")
         errors = validate_fa3_xml(xml)
         if errors:
             raise CorrectionRefused(f"The correction XML fails the FA(3) XSD, nothing saved: {'; '.join(errors[:3])}", 422)
         file_number = db.get_next_file_number()
-        c = plan["correction"]
         db.append_correction_row(
             file_number=file_number,
             invoice_number=plan["invoice_number"],
             issue_date=plan["issue_date"],
             due_date=plan["due_date"],
-            client_name=(plan.get("client") or {}).get("name", ""),
+            client_name=client.get("name", ""),
             description=plan["description"],
             amount=plan["amount"],
             currency=plan["currency"],
@@ -258,9 +330,20 @@ def create_correction(db, original_id: int, new_amount, reason=None, correction_
         )
     stored = db.get_invoice(file_number)
     sc = (stored or {}).get("correction") or {}
-    if not stored or sc.get("error") or stored.get("invoice_number") != plan["invoice_number"] \
-            or abs(float(sc.get("amount_after", -1)) - c["amount_after"]) > 0.005:
+    problems = []
+    if not stored:
+        problems.append("row not found")
+    else:
+        if sc.get("error"):
+            problems.append(sc["error"])
+        if stored.get("invoice_number") != plan["invoice_number"]:
+            problems.append(f"number {stored.get('invoice_number')!r}")
+        if abs(float(sc.get("amount_after", -1)) - c["amount_after"]) > 0.005:
+            problems.append(f"value after {sc.get('amount_after')!r}")
+        if sc.get("reason") != c["reason"] or sc.get("type") != c["type"]:
+            problems.append(f"reason/type {sc.get('reason')!r}/{sc.get('type')!r}")
+    if problems:
         raise RuntimeError(
             f"Correction {plan['invoice_number']} was written as File # {file_number} but reading it back "
-            f"did not match ({sc.get('error') or 'values differ'}); it is NOT filed. Check the sheet.")
+            f"did not match ({'; '.join(problems)}); it is NOT filed. Check the sheet before doing anything else.")
     return stored

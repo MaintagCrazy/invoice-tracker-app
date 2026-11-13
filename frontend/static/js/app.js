@@ -330,6 +330,10 @@ function renderInvoices() {
             <td class="col-status px-3 py-3 text-sm">
                 ${isCorrection
                     ? `<span class="text-amber-700 font-medium" title="Korekta zu ${inv.correction.original_invoice_number || ''}">Korekta</span>`
+                    : inv.payment_status === 'corrected_to_zero'
+                    ? '<span class="text-gray-500 font-medium">Korrigiert auf 0</span>'
+                    : inv.overpaid > 0
+                    ? `<span class="text-amber-700 font-medium" title="Nach Korrektur zu viel bezahlt">Overpaid ${formatCurrency(inv.overpaid, inv.currency)}</span>`
                     : isPaid
                     ? '<span class="text-green-600 font-medium">Paid</span>'
                     : inv.amount_due > 0
@@ -718,6 +722,7 @@ const korektaBtn = document.getElementById('korekta-btn');
 const korektaModal = document.getElementById('korekta-modal');
 let korektaInvoiceId = null;
 let korektaPreviewKey = null;   // inputs of the last valid preview
+let korektaPreviewed = null;    // what that preview showed: saving refuses if it changed
 let korektaCreatedId = null;    // correction saved but not filed: offered for a retry
 
 const escHtml = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -740,6 +745,7 @@ function korektaMessage(html, kind) {
 
 function korektaInvalidate() {
     korektaPreviewKey = null;
+    korektaPreviewed = null;
     document.getElementById('korekta-confirm-btn').disabled = true;
 }
 
@@ -811,6 +817,7 @@ async function previewKorekta() {
                 <div>Reason: ${escHtml(data.reason)}</div>
                 <div>Difference: <strong>${escHtml(formatCurrency(data.difference, cur))}</strong></div>
                 <div>Type ${escHtml(data.correction_type)}: ${escHtml(data.correction_type_label)}</div>
+                ${data.refund_due ? `<div class="md:col-span-2 text-amber-700 font-medium">Already paid ${escHtml(formatCurrency(data.amount_paid, cur))}: ${escHtml(formatCurrency(data.refund_due, cur))} will be owed back to the buyer.</div>` : ''}
             </div>
             <div class="mt-2 ${data.xsd_valid ? 'text-green-700' : 'text-red-700'}">
                 ${data.xsd_valid ? '<i class="fas fa-check-circle mr-1"></i>FA(3) XML is valid against the official KSeF schema.'
@@ -820,6 +827,7 @@ async function previewKorekta() {
         document.getElementById('korekta-result').classList.remove('hidden');
         if (data.xsd_valid) {
             korektaPreviewKey = JSON.stringify(body);
+            korektaPreviewed = { expected_number: data.correction_number, expected_amount_before: data.amount_before, expected_issue_date: data.issue_date };
             document.getElementById('korekta-confirm-btn').disabled = false;
             korektaMessage(escHtml(data.warning), 'info');
         } else {
@@ -843,12 +851,19 @@ async function confirmKorekta() {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Filing...';
     try {
         const resp = await fetch(`${API_BASE}/api/invoices/${korektaInvoiceId}/correction`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, confirmed: true })
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, ...korektaPreviewed, confirmed: true })
         });
-        const data = await resp.json();
+        const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            korektaMessage(`Nothing saved: ${escHtml(data.detail || resp.statusText)}`, 'error');
-            btn.disabled = false;
+            if (resp.status >= 500 && resp.status !== 502) {
+                // the row may have been written before the failure: never claim "nothing saved"
+                korektaMessage(`Server error: ${escHtml(data.detail || resp.statusText)}. Reload the list to see whether the correction was saved before trying again.`, 'error');
+                btn.style.display = 'none';
+                loadInvoices(); loadStats();
+            } else {
+                korektaMessage(`Nothing saved: ${escHtml(data.detail || resp.statusText)}`, 'error');
+                korektaInvalidate();
+            }
             return;
         }
         korektaPreviewKey = null;
