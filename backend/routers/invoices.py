@@ -2,10 +2,12 @@
 Invoice endpoints - using Google Sheets as database
 """
 import logging
+from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
+from services import correction_service
 from services.sheets_database import get_sheets_db
 from services.ksef_service import file_invoice_in_ksef, KsefFilingError, require_filed_to_send
 from services.sheets_database import InvoiceLocked, DuplicateFileNumber
@@ -115,7 +117,8 @@ def create_invoice(
                 "issue_date": invoice['issue_date'],
                 "due_date": invoice['due_date'],
                 "ksef_reference": invoice.get('ksef_reference', ''),
-                "ksef_hash": invoice.get('ksef_hash', '')
+                "ksef_hash": invoice.get('ksef_hash', ''),
+                "correction": invoice.get('correction')
             }
             client_data = {
                 "name": client.get('name', ''),
@@ -178,7 +181,8 @@ def preview_invoice_html(invoice_id: int):
         "issue_date": invoice['issue_date'],
         "due_date": invoice['due_date'],
         "ksef_reference": invoice.get('ksef_reference', ''),
-        "ksef_hash": invoice.get('ksef_hash', '')
+        "ksef_hash": invoice.get('ksef_hash', ''),
+        "correction": invoice.get('correction')
     }
 
     client = invoice.get('client', {})
@@ -210,7 +214,8 @@ def download_invoice_pdf(invoice_id: int):
         "issue_date": invoice['issue_date'],
         "due_date": invoice['due_date'],
         "ksef_reference": invoice.get('ksef_reference', ''),
-        "ksef_hash": invoice.get('ksef_hash', '')
+        "ksef_hash": invoice.get('ksef_hash', ''),
+        "correction": invoice.get('correction')
     }
 
     client = invoice.get('client', {})
@@ -301,6 +306,72 @@ def preview_invoice_draft(data: InvoicePreviewRequest):
     return Response(content=html.encode('utf-8'), media_type="text/html")
 
 
+class CorrectionRequest(BaseModel):
+    """A correction invoice (faktura korygująca) for a filed invoice: its value becomes new_amount.
+    correction_type 2 = effect at the correction's date (change agreed after the invoice),
+    1 = effect at the original's date (the original carried an error)."""
+    new_amount: Decimal
+    reason: Optional[str] = None
+    correction_type: int = 2
+    confirmed: bool = False
+
+
+@router.post("/{invoice_id}/correction/preview")
+def preview_correction(invoice_id: int, data: CorrectionRequest):
+    """Read-only: the correction that WOULD be made (number, before, after, difference), its
+    FA(3) XML, the XSD result and the PDF (base64) plus HTML. No sheet write, no KSeF call."""
+    db = get_sheets_db()
+    try:
+        return correction_service.preview_correction(db, invoice_id, data.new_amount, data.reason, data.correction_type)
+    except correction_service.CorrectionRefused as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+
+
+@router.post("/{invoice_id}/correction")
+def create_correction(invoice_id: int, data: CorrectionRequest):
+    """Save the correction invoice as a new row and file it in KSeF (the same filing path as every
+    invoice). Requires {"confirmed": true}: filing is legally binding and cannot be withdrawn.
+    A filing failure keeps the row, shows "BLAD: ..." on it and in ksef_error; send it again later."""
+    if not data.confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail=("A correction invoice is filed in KSeF when it is saved, which is legally binding and "
+                    'cannot be withdrawn. Check the preview, then re-send with {"confirmed": true}.'))
+    db = get_sheets_db()
+    try:
+        correction = correction_service.create_correction(db, invoice_id, data.new_amount, data.reason, data.correction_type)
+    except correction_service.CorrectionRefused as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    except (DuplicateFileNumber, RuntimeError) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    client = correction.get("client") or {}
+    try:
+        correction = file_invoice_in_ksef(db, correction, client)
+    except KsefFilingError as e:
+        correction["ksef_error"] = str(e)
+        correction["ksef_status"] = f"BLAD: {e}"[:200]
+
+    # Drive copy of the PDF, as for a new invoice (non-blocking)
+    try:
+        if WEASYPRINT_AVAILABLE:
+            pdf_bytes = get_pdf_service().generate_pdf_bytes(
+                correction_service.pdf_data(correction),
+                {k: client.get(k, "") for k in ("name", "address", "company_id")})
+            filename = drive_filename(correction['file_number'])
+            file_id = get_drive_service().upload_pdf(pdf_bytes, filename)
+            db.update_invoice_drive_file_id(correction['file_number'], file_id)
+            correction['drive_file_id'] = file_id
+    except Exception as e:
+        logger.warning(f"Drive upload failed for correction {correction.get('invoice_number')} (non-critical): {e}")
+
+    return {
+        **correction,
+        "filed": bool(correction.get("ksef_reference")),
+        "summary": correction_service.summary(correction),
+    }
+
+
 @router.patch("/{invoice_id}")
 def patch_invoice(invoice_id: int, data: InvoicePatchRequest):
     """Update specific fields of an invoice"""
@@ -353,6 +424,8 @@ def restore_invoice(invoice_id: int):
         raise HTTPException(status_code=404, detail="Invoice not found — it may have been permanently purged")
     if result == "not_deleted":
         raise HTTPException(status_code=409, detail="Invoice is not in trash — it's already active")
+    if result == "correction":
+        raise HTTPException(status_code=409, detail="A deleted correction invoice is never restored (its values were computed when it was made); make a new correction instead.")
     return {"success": True, "invoice_id": invoice_id, "message": f"Invoice #{invoice_id} restored successfully"}
 
 

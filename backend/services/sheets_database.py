@@ -95,6 +95,24 @@ class InvoiceLocked(ValueError):
     """The invoice is filed in KSeF; it may not be deleted, purged or changed."""
 
 
+# Correction invoices (faktura korygująca) are ordinary rows of the Database tab whose Amount
+# is the signed difference; these columns (added after the last header the first time a
+# correction is saved) link the row to the original and keep what its FA(3) XML needs.
+CORRECTS_HEADER = "Corrects File #"
+CORRECTION_REASON_HEADER = "Correction Reason"
+CORRECTION_TYPE_HEADER = "Correction Type"
+CORRECTION_HEADERS = (CORRECTS_HEADER, CORRECTION_REASON_HEADER, CORRECTION_TYPE_HEADER)
+# the fixed columns create_invoice / update_invoice write by position
+_FIXED_HEADERS = {2: "File #", 3: "Invoice Number", 8: "Amount", 10: "Status", 13: "KSeF Reference"}
+
+
+def _int_or_none(value) -> Optional[int]:
+    s = str(value if value is not None else "").strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    return int(s) if s.isdigit() else None
+
+
 CACHE_TTL = 30  # seconds — how long cached sheet data is considered fresh
 
 
@@ -411,8 +429,16 @@ class SheetsDatabaseService:
                     # base64url SHA-256 of the filed XML: needed for the QR on the PDF
                     "ksef_hash": row.get('KSeF Hash', '')
                 }
+                corrects = _int_or_none(row.get(CORRECTS_HEADER))
+                if corrects is not None:
+                    invoice["_correction_meta"] = {
+                        "corrects": corrects,
+                        "reason": str(row.get(CORRECTION_REASON_HEADER, '') or ''),
+                        "type": _int_or_none(row.get(CORRECTION_TYPE_HEADER)),
+                    }
                 invoices.append(invoice)
 
+            self._link_corrections(invoices)
             invoices.sort(key=lambda x: x['file_number'], reverse=True)
             self._cache_set("invoices", invoices)
             return invoices
@@ -420,6 +446,72 @@ class SheetsDatabaseService:
         except Exception as e:
             logger.error(f"Error fetching invoices: {e}")
             return []
+
+    @staticmethod
+    def _link_corrections(invoices: List[Dict]) -> None:
+        """Tie each correction row to its original, in File # order.
+
+        A correction row gets invoice["correction"] (the original's number, issue date, KSeF
+        number, and the value before and after this correction) and owes nothing itself
+        (amount_due 0, payment_status "correction"). Its original gets corrected_amount (its
+        value after every correction that is not deleted), corrections (the list) and an
+        amount_due / payment_status computed on the corrected value, so totals and the
+        outstanding per client follow the corrected value. Rows whose link is broken get
+        correction["error"], which blocks building and filing them.
+        """
+        by_fn: Dict[int, Dict] = {}
+        for inv in invoices:
+            by_fn.setdefault(inv["file_number"], inv)
+        correction_fns = {inv["file_number"] for inv in invoices if inv.get("_correction_meta")}
+        current: Dict[int, float] = {}  # original File # -> value after the corrections so far
+
+        for inv in sorted(invoices, key=lambda x: x["file_number"]):
+            meta = inv.pop("_correction_meta", None)
+            if not meta:
+                continue
+            orig_fn = meta["corrects"]
+            block = {"original_file_number": orig_fn, "reason": meta["reason"], "type": meta["type"]}
+            orig = by_fn.get(orig_fn)
+            if orig is None or orig is inv:
+                block["error"] = f"the original invoice (File # {orig_fn}) is not in the sheet"
+            elif orig_fn in correction_fns:
+                block["error"] = f"File # {orig_fn} is itself a correction; a correction must point to the original invoice"
+            elif orig["status"] == "deleted":
+                block["error"] = f"the original invoice (File # {orig_fn}) is deleted"
+            else:
+                before = current.get(orig_fn, round(orig["amount"], 2))
+                after = round(before + inv["amount"], 2)
+                block.update(
+                    original_invoice_number=orig["invoice_number"],
+                    original_issue_date=orig["issue_date"],
+                    original_ksef_reference=orig["ksef_reference"],
+                    original_description=orig["description"],
+                    amount_before=before,
+                    amount_after=after,
+                )
+                if inv["status"] != "deleted":  # a deleted (never filed) correction changes nothing
+                    current[orig_fn] = after
+                    orig.setdefault("corrections", []).append({
+                        "file_number": inv["file_number"],
+                        "invoice_number": inv["invoice_number"],
+                        "issue_date": inv["issue_date"],
+                        "amount": inv["amount"],
+                        "ksef_reference": inv["ksef_reference"],
+                    })
+            inv["correction"] = block
+            inv["amount_due"] = 0
+            inv["payment_status"] = "correction"
+
+        for orig_fn, value in current.items():
+            orig = by_fn[orig_fn]
+            orig["corrected_amount"] = value
+            orig["amount_due"] = max(0, round(value - orig["amount_paid"], 2))
+            if orig["amount_paid"] >= value:
+                orig["payment_status"] = "paid"
+            elif orig["amount_paid"] > 0:
+                orig["payment_status"] = "partial"
+            else:
+                orig["payment_status"] = "unpaid"
 
     def get_invoices(self, status: Optional[str] = None, client_id: Optional[int] = None, include_deleted: bool = False) -> List[Dict]:
         """Get invoices with optional filters (uses cached data). Excludes deleted invoices by default."""
@@ -580,6 +672,47 @@ class SheetsDatabaseService:
             logger.error(f"Error creating invoice: {e}")
             raise
 
+    def _ensure_correction_columns(self) -> Dict[str, int]:
+        """1-based column of each correction header; a missing one is added after the last
+        header (the grid is widened first if needed). Refuses when the fixed columns are not
+        where create_invoice / update_invoice write them."""
+        ws = self.db_worksheet
+        headers = list(ws.row_values(1))
+        for col, name in _FIXED_HEADERS.items():
+            if len(headers) < col or headers[col - 1] != name:
+                raise RuntimeError(f"Database sheet column {col} is not '{name}'; the sheet layout changed, nothing written.")
+        cols = {}
+        for name in CORRECTION_HEADERS:
+            if name in headers:
+                cols[name] = headers.index(name) + 1
+                continue
+            col = len(headers) + 1
+            col_count = getattr(ws, "col_count", None)
+            if col_count is not None and col > col_count:
+                ws.add_cols(col - col_count)
+            ws.update_cell(1, col, name)
+            headers.append(name)
+            cols[name] = col
+            logger.info(f"Added '{name}' column header to Database sheet (column {col})")
+        return cols
+
+    def append_correction_row(self, *, file_number: int, invoice_number: str, issue_date: str,
+                              due_date: str, client_name: str, description: str, amount: float,
+                              currency: str, corrects_file_number: int, reason: str,
+                              correction_type: int) -> None:
+        """Write one correction invoice as a new Database row (status draft, KSeF columns empty).
+        The caller holds _CREATE_LOCK and has checked everything (services/correction_service)."""
+        cols = self._ensure_correction_columns()
+        row = [""] * max(cols.values())
+        row[:10] = [f"Faktura {file_number}.pdf", file_number, invoice_number, issue_date, due_date,
+                    client_name, description, amount, currency, "draft"]
+        row[cols[CORRECTS_HEADER] - 1] = corrects_file_number
+        row[cols[CORRECTION_REASON_HEADER] - 1] = reason
+        row[cols[CORRECTION_TYPE_HEADER] - 1] = correction_type
+        self.db_worksheet.append_row(row)
+        self._cache_invalidate("invoices")
+        logger.info(f"Created correction {invoice_number} (File #{file_number}) of File #{corrects_file_number}: {amount:+.2f} {currency}")
+
     # Only these fields have a column behind them. Anything else passed to
     # update_invoice used to be accepted and silently dropped — that is how a
     # KSeF reference could be lost right after an irreversible filing.
@@ -633,6 +766,8 @@ class SheetsDatabaseService:
             # never overwrite a stored KSeF number/status with an error or in-progress marker
             updates = {k: v for k, v in updates.items() if k != "ksef_reference"
                        and not (k == "ksef_status" and str(v).startswith(("BLAD", "W TOKU")))}
+        elif _int_or_none(row.get(CORRECTS_HEADER)) is not None and {"amount", "description"} & set(updates):
+            raise InvoiceLocked(f"Invoice {row.get('Invoice Number')} is a correction invoice; its amount and description come from the original and cannot be edited. Delete it and make a new correction.")
         try:
             for field, col in self._UPDATABLE_COLUMNS.items():
                 if field not in updates:
@@ -677,6 +812,10 @@ class SheetsDatabaseService:
                     if row.get('Status') != 'deleted':
                         logger.warning(f"Invoice {file_number} is not deleted, cannot restore")
                         return "not_deleted"
+                    if _int_or_none(row.get(CORRECTS_HEADER)) is not None:
+                        # its before/after values were computed when it was made; a newer
+                        # correction may exist since, so a deleted correction is never revived
+                        return "correction"
                     row_num = idx + 2
                     # Set status back to "draft" (column J = 10)
                     self.db_worksheet.update_cell(row_num, 10, "draft")

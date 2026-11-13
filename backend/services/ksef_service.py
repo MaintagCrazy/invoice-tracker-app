@@ -30,6 +30,7 @@ try:
         Tpodmiot1, Tpodmiot2, Tadres,
         TkodWaluty, TrodzajFaktury, TstawkaPodatku, TformaPlatnosci, TkodyKrajowUe,
         TrachunekBankowy, FakturaPodmiot2Jst, FakturaPodmiot2Gv,
+        FakturaFaDaneFaKorygowanej, TtypKorekty,
     )
     from ksef2.infra.schema.fa3.models.elementarne_typy_danych_v10_0_e import Twybor12, Twybor1
     from ksef2.infra.schema.fa3.models.kody_krajow_v10_0_e import TkodKraju
@@ -164,17 +165,67 @@ def _get_country_enum(country_code: str) -> "TkodKraju":
         return TkodKraju.PL
 
 
+def _split_amount(amount: Decimal, buyer_country: str) -> tuple:
+    """(net, vat, gross) of an amount as the app stores it: gross for a Polish buyer (23%),
+    net = gross for EU (np I) and export (0 EX)."""
+    if buyer_country == "PL":
+        net = (amount / Decimal("1.23")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return net, amount - net, amount
+    return amount, Decimal("0.00"), amount
+
+
+# FA(3) TypKorekty the app offers (TTypKorekty in schemat.xsd): 1 = effect at the date the
+# original invoice was recorded (an error on the original), 2 = effect at the date the
+# correction is issued (a change agreed after the invoice). 3 ("other date, per line") is not offered.
+CORRECTION_TYPES = {1: "VALUE_1", 2: "VALUE_2"}
+
+
+def correction_problem(invoice: dict) -> Optional[str]:
+    """Reason a correction invoice (one carrying a 'correction' block) must not be built or
+    filed, or None. The block is attached by sheets_database from the linked original."""
+    c = invoice.get("correction") or {}
+    if c.get("error"):
+        return c["error"]
+    for key in ("original_invoice_number", "original_issue_date", "original_ksef_reference",
+                "amount_before", "amount_after"):
+        if c.get(key) in (None, ""):
+            return f"correction has no {key.replace('_', ' ')}"
+    if not parse_issue_date(c["original_issue_date"]):
+        return f"original issue date {c['original_issue_date']!r} is not readable"
+    try:
+        before, after, diff = _dec(c["amount_before"]), _dec(c["amount_after"]), _dec(invoice["amount"])
+    except Exception:
+        return "correction amounts are not numbers"
+    if diff == 0:
+        return "the correction changes nothing (difference 0.00)"
+    if after < 0:
+        return f"the new total {after} would be negative"
+    if after - before != diff:
+        return f"stored difference {diff} does not equal {after} - {before}"
+    if int(c.get("type") or 0) not in CORRECTION_TYPES:
+        return f"correction type {c.get('type')!r} is not supported (1 or 2)"
+    return None
+
+
 def build_faktura(invoice: dict, client: dict) -> "Faktura":
     """
     Build a KSeF FA(3) Faktura object from invoice-tracker-app data.
 
     Args:
         invoice: dict with keys from sheets_database (invoice_number, amount,
-                 currency, issue_date, due_date, description, work_dates)
+                 currency, issue_date, due_date, description, work_dates).
+                 A correction invoice also carries invoice["correction"] (see
+                 sheets_database._link_corrections) and is built as RodzajFaktury KOR.
         client:  dict with keys (name, address, company_id, email)
 
     Returns:
         Faktura object ready for XML serialization and KSeF submission.
+
+    Corrections follow the Ministry's "Broszura informacyjna dotycząca struktury logicznej
+    FA(3)" (sierpień 2026): every field is given as it stands after the correction, the tax
+    base, tax and total (P_13_x, P_14_x, P_15) as the difference; DaneFaKorygowanej carries the
+    original's P_1, P_2 and KSeF number (NrKSeF=1); the line is shown before (StanPrzed=1) and
+    after the correction as separate, separately numbered rows (Tabela 48, Przykład 23 metoda druga).
     """
     if not _ksef2_available:
         raise RuntimeError("ksef2 SDK not installed")
@@ -189,24 +240,32 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
         )
     if not parse_issue_date(invoice.get("issue_date")):
         raise ValueError(f"Invoice issue date '{invoice.get('issue_date')}' is not a valid date.")
+    correction = invoice.get("correction")
+    if correction is not None:
+        problem = correction_problem(invoice)
+        if problem:
+            raise ValueError(f"Correction {invoice.get('invoice_number')} cannot be built: {problem}.")
     tax_rate_enum, tax_multiplier = _get_tax_rate(buyer_country)
 
-    amount = _dec(invoice["amount"])
     currency = invoice.get("currency", "EUR")
 
     # For PL domestic: amount is gross, derive net + VAT
     # For EU/export: amount is net (no VAT)
-    if buyer_country == "PL":
-        gross = amount
-        net = (gross / Decimal("1.23")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        vat = gross - net
+    if correction is None:
+        net, vat, gross = _split_amount(_dec(invoice["amount"]), buyer_country)
     else:
-        net = amount
-        vat = Decimal("0.00")
-        gross = net
+        # each state is split on its own, so before + difference == after to the cent
+        net_b, vat_b, gross_b = _split_amount(_dec(correction["amount_before"]), buyer_country)
+        net_a, vat_a, gross_a = _split_amount(_dec(correction["amount_after"]), buyer_country)
+        net, vat, gross = net_a - net_b, vat_a - vat_b, gross_a - gross_b
 
     issue_y, issue_m, issue_d = _parse_date(invoice.get("issue_date", ""))
     due_y, due_m, due_d = _parse_date(invoice.get("due_date", ""))
+    # P_6 is the date the service was done: on a correction it stays the original's
+    if correction is None:
+        p6_y, p6_m, p6_d = issue_y, issue_m, issue_d
+    else:
+        p6_y, p6_m, p6_d = _parse_date(correction["original_issue_date"])
 
     now = datetime.now()
 
@@ -277,6 +336,39 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
         pmarzy=FakturaFaAdnotacjePmarzy(p_pmarzy_n=Twybor1.VALUE_1),
     )
 
+    # ── Lines (FaWiersz) ──────────────────────────────────────
+    def _line(nr: int, l_net: Decimal, l_vat: Decimal, before: bool = False) -> "FakturaFaFaWiersz":
+        return FakturaFaFaWiersz(
+            nr_wiersza_fa=nr,
+            p_7=invoice.get("description", "Services"),
+            p_8_a="usł.",
+            p_8_b=Decimal("1"),
+            p_9_a=l_net,
+            p_11=l_net,
+            p_11_vat=l_vat,
+            p_12=tax_rate_enum,
+            stan_przed=Twybor1.VALUE_1 if before else None,
+        )
+
+    kor_kwargs = {}
+    if correction is None:
+        rows = [_line(1, net, vat)]
+        rodzaj = TrodzajFaktury.VAT
+    else:
+        rows = [_line(1, net_b, vat_b, before=True), _line(2, net_a, vat_a)]
+        rodzaj = TrodzajFaktury.KOR
+        oy, om, od = _parse_date(correction["original_issue_date"])
+        kor_kwargs = dict(
+            przyczyna_korekty=(correction.get("reason") or "").strip()[:256] or None,
+            typ_korekty=getattr(TtypKorekty, CORRECTION_TYPES[int(correction["type"])]),
+            dane_fa_korygowanej=[FakturaFaDaneFaKorygowanej(
+                data_wyst_fa_korygowanej=f"{oy:04d}-{om:02d}-{od:02d}",
+                nr_fa_korygowanej=correction["original_invoice_number"],
+                nr_kse_f=Twybor1.VALUE_1,
+                nr_kse_ffa_korygowanej=correction["original_ksef_reference"],
+            )],
+        )
+
     # ── Build the Faktura ─────────────────────────────────────
     faktura = Faktura(
         naglowek=Tnaglowek(
@@ -308,22 +400,11 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
             kod_waluty=_get_ksef_currency(currency),
             p_1=XmlDate(issue_y, issue_m, issue_d),
             p_2=invoice["invoice_number"],
-            p_6=XmlDate(issue_y, issue_m, issue_d),
+            p_6=XmlDate(p6_y, p6_m, p6_d),
             p_15=gross,
-            rodzaj_faktury=TrodzajFaktury.VAT,
+            rodzaj_faktury=rodzaj,
             adnotacje=adnotacje,
-            fa_wiersz=[
-                FakturaFaFaWiersz(
-                    nr_wiersza_fa=1,
-                    p_7=invoice.get("description", "Services"),
-                    p_8_a="us\u0142.",
-                    p_8_b=Decimal("1"),
-                    p_9_a=net,
-                    p_11=net,
-                    p_11_vat=vat,
-                    p_12=tax_rate_enum,
-                ),
-            ],
+            fa_wiersz=rows,
             platnosc=FakturaFaPlatnosc(
                 # 6 = Przelew (bank transfer). Was 2 = Karta (card), which
                 # contradicted the IBAN/SWIFT block on the same invoice.
@@ -342,10 +423,48 @@ def build_faktura(invoice: dict, client: dict) -> "Faktura":
                 ],
             ),
             **tax_summary,
+            **kor_kwargs,
         ),
     )
 
     return faktura
+
+
+def render_faktura_xml(invoice: dict, client: dict) -> bytes:
+    """The exact FA(3) XML bytes the app would send for this invoice (in memory, nothing sent)."""
+    return _render_xml(build_faktura(invoice, client)).encode("utf-8")
+
+
+_FA3_SCHEMA = None
+_FA3_SCHEMA_GUARD = threading.Lock()
+
+
+def _fa3_schema():
+    """The official FA(3) XSD shipped in the pinned ksef2 (infra/schema/fa3/definitions/schemat.xsd);
+    its imports are local files, and the parser never touches the network."""
+    global _FA3_SCHEMA
+    with _FA3_SCHEMA_GUARD:
+        if _FA3_SCHEMA is None:
+            from importlib.resources import files
+            from lxml import etree
+            path = files("ksef2") / "infra" / "schema" / "fa3" / "definitions" / "schemat.xsd"
+            parser = etree.XMLParser(no_network=True, resolve_entities=False)
+            _FA3_SCHEMA = etree.XMLSchema(etree.parse(str(path), parser))
+        return _FA3_SCHEMA
+
+
+def validate_fa3_xml(xml_bytes: bytes) -> list:
+    """Errors of the XML against the official FA(3) XSD; [] means valid. A schema that cannot be
+    loaded is reported as an error, never as valid."""
+    try:
+        from lxml import etree
+        schema = _fa3_schema()
+        doc = etree.fromstring(xml_bytes, etree.XMLParser(no_network=True, resolve_entities=False))
+    except Exception as e:
+        return [f"XSD validation could not run: {type(e).__name__}: {e}"]
+    if schema.validate(doc):
+        return []
+    return [f"line {err.line}: {err.message}" for err in schema.error_log]
 
 
 def xml_hash_b64url(xml_bytes: bytes) -> str:
@@ -461,7 +580,12 @@ def submit_invoice_to_ksef(invoice: dict, client: dict) -> dict:
     if not config.KSEF_TOKEN:
         raise RuntimeError("KSEF_TOKEN not configured")
 
-    xml_bytes = _render_xml(build_faktura(invoice, client)).encode("utf-8")
+    xml_bytes = render_faktura_xml(invoice, client)
+    if invoice.get("correction") is not None:
+        # a correction is never sent unless its XML passes the official FA(3) XSD
+        errors = validate_fa3_xml(xml_bytes)
+        if errors:
+            raise ValueError(f"correction XML fails the FA(3) XSD: {'; '.join(errors[:3])}")
     logger.info(f"Submitting invoice {invoice['invoice_number']} to KSeF (NIP: {config.COMPANY['nip']})")
 
     auth = _auth()
@@ -578,11 +702,16 @@ def _preflight(invoice: dict, client: dict) -> Optional[str]:
     """Reason this invoice must not be filed, or None."""
     if not parse_issue_date(invoice.get("issue_date")):
         return f"issue date {invoice.get('issue_date')!r} is not readable; correct it first."
-    try:
-        if float(invoice.get("amount") or 0) <= 0:
-            return "amount must be greater than 0."
-    except (TypeError, ValueError):
-        return "amount is not a number."
+    if invoice.get("correction") is not None:
+        problem = correction_problem(invoice)  # a correction's amount is the (signed) difference
+        if problem:
+            return f"{problem}."
+    else:
+        try:
+            if float(invoice.get("amount") or 0) <= 0:
+                return "amount must be greater than 0."
+        except (TypeError, ValueError):
+            return "amount is not a number."
     if (invoice.get("currency") or "").upper() not in CURRENCY_MAP:
         return f"currency {invoice.get('currency')!r} is not supported for KSeF."
     if not _detect_country(client.get("company_id", "")):

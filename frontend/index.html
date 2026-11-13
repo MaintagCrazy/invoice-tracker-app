@@ -424,7 +424,44 @@
             <div class="p-4 border-t flex justify-end space-x-3">
                 <button onclick="closePdfModal()" class="px-4 py-2 border rounded hover:bg-gray-50"><span data-lang-de>Schließen</span><span data-lang-en>Close</span></button>
                 <button id="download-btn" onclick="downloadInvoice()" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"><i class="fas fa-download mr-2"></i><span data-lang-de>Herunterladen</span><span data-lang-en>Download</span></button>
+                <button id="korekta-btn" onclick="openKorektaModal(currentInvoiceId)" style="display:none" class="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700" title="Faktura korygująca"><i class="fas fa-pen-to-square mr-2"></i>Korekta</button>
                 <button id="send-btn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"><i class="fas fa-paper-plane mr-2"></i><span data-lang-de>Rechnung senden</span><span data-lang-en>Send Invoice</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Correction (Korekta) Modal: new amount -> preview -> confirm (files in KSeF) -->
+    <div id="korekta-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl m-4 max-h-[92vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-medium">Korekta <span class="text-gray-500 text-sm" id="korekta-title"></span></h3>
+                <button onclick="closeKorektaModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="p-4 overflow-y-auto flex-1 space-y-4">
+                <p class="text-sm text-gray-600" id="korekta-current"></p>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Neuer Betrag</span><span data-lang-en>New amount</span> *</label><input type="number" id="korekta-amount" step="0.01" min="0" class="mt-1 w-full border rounded px-3 py-2"></div>
+                    <div class="md:col-span-2"><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Grund der Korrektur</span><span data-lang-en>Reason</span> (PrzyczynaKorekty)</label><input type="text" id="korekta-reason" maxlength="256" class="mt-1 w-full border rounded px-3 py-2"></div>
+                </div>
+                <div><label class="block text-sm font-medium text-gray-700"><span data-lang-de>Art der Korrektur</span><span data-lang-en>Kind of correction</span></label>
+                    <select id="korekta-type" class="mt-1 w-full border rounded px-3 py-2">
+                        <option value="2">2 - Änderung nach Rechnungsstellung / change agreed after the invoice (wirkt zum Korrekturdatum)</option>
+                        <option value="1">1 - Fehler auf der Originalrechnung / error on the original invoice (wirkt zum Originaldatum)</option>
+                    </select>
+                </div>
+                <div class="flex justify-end">
+                    <button id="korekta-preview-btn" onclick="previewKorekta()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"><i class="fas fa-eye mr-2"></i><span data-lang-de>Vorschau</span><span data-lang-en>Preview</span></button>
+                </div>
+                <div id="korekta-result" class="hidden space-y-3">
+                    <div id="korekta-summary" class="text-sm bg-gray-50 border rounded p-3"></div>
+                    <iframe id="korekta-frame" class="w-full border rounded" style="height:420px"></iframe>
+                </div>
+                <div id="korekta-message" class="hidden text-sm rounded p-3"></div>
+            </div>
+            <div class="p-4 border-t flex justify-end space-x-3">
+                <button onclick="closeKorektaModal()" class="px-4 py-2 border rounded hover:bg-gray-50"><span data-lang-de>Schließen</span><span data-lang-en>Close</span></button>
+                <button id="korekta-retry-btn" onclick="retryKorektaFiling()" style="display:none" class="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700"><i class="fas fa-rotate-right mr-2"></i><span data-lang-de>Erneut in KSeF einreichen</span><span data-lang-en>File in KSeF again</span></button>
+                <button id="korekta-confirm-btn" onclick="confirmKorekta()" disabled class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"><i class="fas fa-file-signature mr-2"></i><span data-lang-de>Bestätigen und in KSeF einreichen</span><span data-lang-en>Confirm and file in KSeF</span></button>
             </div>
         </div>
     </div>

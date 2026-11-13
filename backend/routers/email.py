@@ -103,6 +103,7 @@ def send_invoice_sync(
         "due_date": invoice["due_date"],
         "ksef_reference": invoice.get("ksef_reference", ""),
         "ksef_hash": invoice.get("ksef_hash", ""),
+        "correction": invoice.get("correction"),
     }
     client = invoice.get("client", {})
     pdf_bytes = pdf_service.generate_pdf_bytes(invoice_data, {
@@ -192,7 +193,8 @@ async def send_invoice(
         "issue_date": invoice['issue_date'],
         "due_date": invoice['due_date'],
         "ksef_reference": invoice.get('ksef_reference', ''),
-        "ksef_hash": invoice.get('ksef_hash', '')
+        "ksef_hash": invoice.get('ksef_hash', ''),
+        "correction": invoice.get('correction')
     }
 
     client = invoice.get('client', {})

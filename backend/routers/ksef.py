@@ -161,8 +161,9 @@ def _reupload_pdf(db, invoice_number: str) -> bool:
         inv = next(i for i in db.get_invoices() if i["invoice_number"] == invoice_number)
         c = inv.get("client", {})
         pdf = get_pdf_service().generate_pdf_bytes(
-            {k: inv.get(k, "") for k in ("invoice_number", "description", "amount", "currency",
-                                         "issue_date", "due_date", "ksef_reference", "ksef_hash")},
+            {**{k: inv.get(k, "") for k in ("invoice_number", "description", "amount", "currency",
+                                            "issue_date", "due_date", "ksef_reference", "ksef_hash")},
+             "correction": inv.get("correction")},
             {"name": c.get("name", ""), "address": c.get("address", ""), "company_id": c.get("company_id", "")})
         file_id = get_drive_service().upload_pdf(pdf, drive_filename(inv["file_number"]))
         db.update_invoice_drive_file_id(inv["file_number"], file_id)

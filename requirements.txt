@@ -31,6 +31,10 @@ openpyxl>=3.1.0
 fpdf2>=2.7.0
 pikepdf>=8.0.0
 
+# FA(3) XSD validation of correction invoices before they are saved or filed
+# (already installed as a dependency of ksef2 via signxml; listed because the app imports it)
+lxml>=5.0
+
 # KSeF 2.0 (Polish National e-Invoice System)
 # Pinned: the FA(3) model style (pydantic vs dataclass) and method names change
 # between releases; an unpinned floor silently drifted prod to 0.18.1 and broke

@@ -271,6 +271,16 @@ function ksefBadge(inv) {
     return '';
 }
 
+// Amount cell: a corrected invoice shows its original value struck through and the value
+// after its correction invoices; a correction shows its own (signed) difference.
+function amountHtml(inv) {
+    if (inv.corrected_amount !== undefined && inv.corrected_amount !== null && inv.corrected_amount !== inv.amount) {
+        const by = (inv.corrections || []).map(c => c.invoice_number).join(', ');
+        return `<span class="line-through text-gray-400 text-xs" title="Korrigiert durch ${by}">${formatCurrency(inv.amount, inv.currency)}</span> ${formatCurrency(inv.corrected_amount, inv.currency)}`;
+    }
+    return formatCurrency(inv.amount, inv.currency);
+}
+
 function renderInvoices() {
     if (invoices.length === 0) {
         invoiceTable.innerHTML = `
@@ -286,7 +296,8 @@ function renderInvoices() {
     }
 
     invoiceTable.innerHTML = invoices.map(inv => {
-        const isPaid = inv.payment_status === 'paid' || (inv.amount_due !== undefined && inv.amount_due <= 0);
+        const isCorrection = !!inv.correction;
+        const isPaid = !isCorrection && (inv.payment_status === 'paid' || (inv.amount_due !== undefined && inv.amount_due <= 0));
         const rowBg = isPaid ? 'bg-gray-100' : '';
         const textMuted = isPaid ? 'text-gray-400' : '';
 
@@ -304,7 +315,7 @@ function renderInvoices() {
                 ${inv.description || '-'}
             </td>
             <td class="col-amount px-3 py-3 text-sm font-medium ${textMuted} truncate">
-                ${formatCurrency(inv.amount, inv.currency)}
+                ${amountHtml(inv)}
             </td>
             <td class="col-paid px-3 py-3 text-sm ${isPaid ? 'text-gray-400' : 'text-green-600'} truncate">
                 ${formatCurrency(inv.amount_paid || 0, inv.currency)}
@@ -316,7 +327,9 @@ function renderInvoices() {
                 ${formatDate(inv.issue_date)}
             </td>
             <td class="col-status px-3 py-3 text-sm">
-                ${isPaid
+                ${isCorrection
+                    ? `<span class="text-amber-700 font-medium" title="Korekta zu ${inv.correction.original_invoice_number || ''}">Korekta</span>`
+                    : isPaid
                     ? '<span class="text-green-600 font-medium">Paid</span>'
                     : inv.amount_due > 0
                         ? '<span class="text-red-600 font-medium">Due</span>'
@@ -345,13 +358,15 @@ function renderMobileInvoices() {
     }
 
     list.innerHTML = invoices.map(inv => {
-        const isPaid = inv.payment_status === 'paid' || (inv.amount_due !== undefined && inv.amount_due <= 0);
+        const isCorrection = !!inv.correction;
+        const isPaid = !isCorrection && (inv.payment_status === 'paid' || (inv.amount_due !== undefined && inv.amount_due <= 0));
         return `
         <div class="invoice-card ${isPaid ? 'paid-card' : ''}" onclick="previewInvoice(${inv.id})">
             <div style="min-width:0; flex:1">
                 <div class="flex items-center gap-2">
                     <span class="text-xs text-gray-400">${inv.invoice_number}</span>
                     ${isPaid ? '<span class="text-xs text-green-600 font-medium">Paid</span>' : ''}
+                    ${isCorrection ? `<span class="text-xs text-amber-700 font-medium">Korekta ${formatCurrency(inv.amount, inv.currency)}</span>` : ''}
                 </div>
                 <div class="font-medium text-gray-900 text-sm truncate">${inv.client?.name || '-'}</div>
             </div>
@@ -670,10 +685,16 @@ function closeActionMenu() {
 
 // ============ PDF PREVIEW ============
 
+// A filed invoice (KSeF number) that is not itself a correction can be corrected
+function canCorrect(inv) {
+    return !!(inv && inv.ksef_reference && !inv.correction);
+}
+
 function previewInvoice(invoiceId) {
     currentInvoiceId = invoiceId;
     pdfFrame.src = `${API_BASE}/api/invoices/${invoiceId}/preview`;
     sendBtn.style.display = 'none';
+    korektaBtn.style.display = canCorrect(invoices.find(i => i.id === invoiceId)) ? 'inline-flex' : 'none';
     pdfModal.classList.remove('hidden');
     pdfModal.classList.add('flex');
 }
@@ -682,8 +703,196 @@ function previewAndSend(invoiceId) {
     currentInvoiceId = invoiceId;
     pdfFrame.src = `${API_BASE}/api/invoices/${invoiceId}/preview`;
     sendBtn.style.display = 'inline-flex';
+    korektaBtn.style.display = canCorrect(invoices.find(i => i.id === invoiceId)) ? 'inline-flex' : 'none';
     pdfModal.classList.remove('hidden');
     pdfModal.classList.add('flex');
+}
+
+// ============ CORRECTION (KOREKTA) ============
+// New amount -> read-only preview (XML checked against the FA(3) XSD, PDF) -> confirm,
+// which saves the correction invoice and files it in KSeF. Confirm is enabled only for the
+// exact inputs of the last valid preview.
+
+const korektaBtn = document.getElementById('korekta-btn');
+const korektaModal = document.getElementById('korekta-modal');
+let korektaInvoiceId = null;
+let korektaPreviewKey = null;   // inputs of the last valid preview
+let korektaCreatedId = null;    // correction saved but not filed: offered for a retry
+
+const escHtml = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+function korektaInputs() {
+    return {
+        new_amount: document.getElementById('korekta-amount').value.trim(),
+        reason: document.getElementById('korekta-reason').value.trim(),
+        correction_type: parseInt(document.getElementById('korekta-type').value, 10)
+    };
+}
+
+function korektaMessage(html, kind) {
+    const el = document.getElementById('korekta-message');
+    const styles = { error: 'bg-red-50 text-red-700 border border-red-200', ok: 'bg-green-50 text-green-800 border border-green-200', info: 'bg-blue-50 text-blue-800 border border-blue-200' };
+    el.className = `text-sm rounded p-3 ${styles[kind] || styles.info}`;
+    el.innerHTML = html;
+    el.classList.remove('hidden');
+}
+
+function korektaInvalidate() {
+    korektaPreviewKey = null;
+    document.getElementById('korekta-confirm-btn').disabled = true;
+}
+
+function openKorektaModal(invoiceId) {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!canCorrect(inv)) {
+        alert('Only an invoice filed in KSeF (and not itself a correction) can be corrected.');
+        return;
+    }
+    closePdfModal();
+    korektaInvoiceId = invoiceId;
+    korektaCreatedId = null;
+    const current = inv.corrected_amount ?? inv.amount;
+    document.getElementById('korekta-title').textContent = `${inv.invoice_number} · ${inv.client?.name || ''}`;
+    document.getElementById('korekta-current').innerHTML =
+        `Current value: <strong>${escHtml(formatCurrency(current, inv.currency))}</strong> · KSeF ${escHtml(inv.ksef_reference)}` +
+        (inv.corrections?.length ? ` · already corrected by ${inv.corrections.map(c => escHtml(c.invoice_number)).join(', ')}` : '');
+    document.getElementById('korekta-amount').value = current;
+    document.getElementById('korekta-reason').value = 'Zmiana wartości usługi';
+    document.getElementById('korekta-type').value = '2';
+    document.getElementById('korekta-result').classList.add('hidden');
+    document.getElementById('korekta-message').classList.add('hidden');
+    document.getElementById('korekta-frame').srcdoc = '';
+    document.getElementById('korekta-retry-btn').style.display = 'none';
+    document.getElementById('korekta-confirm-btn').style.display = 'inline-flex';
+    korektaInvalidate();
+    korektaModal.classList.remove('hidden');
+    korektaModal.classList.add('flex');
+}
+
+function closeKorektaModal() {
+    korektaModal.classList.add('hidden');
+    korektaModal.classList.remove('flex');
+    korektaInvoiceId = null;
+    korektaInvalidate();
+}
+
+['korekta-amount', 'korekta-reason', 'korekta-type'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', korektaInvalidate);
+});
+
+async function previewKorekta() {
+    if (!korektaInvoiceId) return;
+    const body = korektaInputs();
+    if (body.new_amount === '') { korektaMessage('Enter the new amount.', 'error'); return; }
+    const btn = document.getElementById('korekta-preview-btn');
+    btn.disabled = true;
+    korektaInvalidate();
+    document.getElementById('korekta-message').classList.add('hidden');
+    try {
+        const resp = await fetch(`${API_BASE}/api/invoices/${korektaInvoiceId}/correction/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            document.getElementById('korekta-result').classList.add('hidden');
+            korektaMessage(`Not possible: ${escHtml(data.detail || resp.statusText)}`, 'error');
+            return;
+        }
+        const cur = data.currency;
+        document.getElementById('korekta-summary').innerHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+                <div>Correction number: <strong>${escHtml(data.correction_number)}</strong> (issued ${escHtml(data.issue_date)})</div>
+                <div>Corrects: <strong>${escHtml(data.original.invoice_number)}</strong> of ${escHtml(data.original.issue_date)}</div>
+                <div>Before: ${escHtml(formatCurrency(data.amount_before, cur))}</div>
+                <div class="col-span-1">KSeF of the original: ${escHtml(data.original.ksef_reference)}</div>
+                <div>After: <strong>${escHtml(formatCurrency(data.amount_after, cur))}</strong></div>
+                <div>Reason: ${escHtml(data.reason)}</div>
+                <div>Difference: <strong>${escHtml(formatCurrency(data.difference, cur))}</strong></div>
+                <div>Type ${escHtml(data.correction_type)}: ${escHtml(data.correction_type_label)}</div>
+            </div>
+            <div class="mt-2 ${data.xsd_valid ? 'text-green-700' : 'text-red-700'}">
+                ${data.xsd_valid ? '<i class="fas fa-check-circle mr-1"></i>FA(3) XML is valid against the official KSeF schema.'
+                                 : '<i class="fas fa-times-circle mr-1"></i>FA(3) XML fails the KSeF schema: ' + escHtml((data.xsd_errors || []).join('; '))}
+            </div>`;
+        document.getElementById('korekta-frame').srcdoc = data.html || '';
+        document.getElementById('korekta-result').classList.remove('hidden');
+        if (data.xsd_valid) {
+            korektaPreviewKey = JSON.stringify(body);
+            document.getElementById('korekta-confirm-btn').disabled = false;
+            korektaMessage(escHtml(data.warning), 'info');
+        } else {
+            korektaMessage('This correction cannot be filed until the schema errors above are fixed.', 'error');
+        }
+    } catch (e) {
+        console.error('Correction preview failed:', e);
+        korektaMessage('Preview failed (no answer from the server). Nothing was saved.', 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function confirmKorekta() {
+    if (!korektaInvoiceId || !korektaPreviewKey) return;
+    const body = korektaInputs();
+    if (JSON.stringify(body) !== korektaPreviewKey) { korektaInvalidate(); korektaMessage('The inputs changed; preview again.', 'error'); return; }
+    if (!confirm('Save this correction invoice and file it in KSeF now? A KSeF filing is legally binding and cannot be withdrawn.')) return;
+    const btn = document.getElementById('korekta-confirm-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Filing...';
+    try {
+        const resp = await fetch(`${API_BASE}/api/invoices/${korektaInvoiceId}/correction`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, confirmed: true })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            korektaMessage(`Nothing saved: ${escHtml(data.detail || resp.statusText)}`, 'error');
+            btn.disabled = false;
+            return;
+        }
+        korektaPreviewKey = null;
+        btn.style.display = 'none';
+        if (data.filed) {
+            korektaMessage(`Correction <strong>${escHtml(data.invoice_number)}</strong> saved and filed in KSeF: <strong>${escHtml(data.ksef_reference)}</strong>. New value of ${escHtml(data.summary.original.invoice_number)}: ${escHtml(formatCurrency(data.summary.amount_after, data.currency))}.`, 'ok');
+        } else {
+            korektaCreatedId = data.id;
+            document.getElementById('korekta-retry-btn').style.display = 'inline-flex';
+            korektaMessage(`Correction <strong>${escHtml(data.invoice_number)}</strong> is saved but NOT filed in KSeF: ${escHtml(data.ksef_error || data.ksef_status)}. File it again before sending it.`, 'error');
+        }
+        loadInvoices();
+        loadStats();
+    } catch (e) {
+        console.error('Correction create failed:', e);
+        korektaMessage('No answer from the server. Reload the list to see whether the correction was saved before trying again.', 'error');
+    } finally {
+        btn.innerHTML = '<i class="fas fa-file-signature mr-2"></i>Confirm and file in KSeF';
+    }
+}
+
+async function retryKorektaFiling() {
+    if (!korektaCreatedId) return;
+    if (!confirm('File this correction invoice in KSeF now? A KSeF filing is legally binding and cannot be withdrawn.')) return;
+    const btn = document.getElementById('korekta-retry-btn');
+    btn.disabled = true;
+    try {
+        const resp = await fetch(`${API_BASE}/api/ksef/submit/${korektaCreatedId}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.ksef_number) {
+            btn.style.display = 'none';
+            korektaCreatedId = null;
+            korektaMessage(`Filed in KSeF: <strong>${escHtml(data.ksef_number)}</strong>.`, 'ok');
+        } else {
+            korektaMessage(`Still NOT filed: ${escHtml(data.detail || resp.statusText)}`, 'error');
+        }
+        loadInvoices();
+        loadStats();
+    } catch (e) {
+        korektaMessage('No answer from the server; reload the list to see the KSeF status.', 'error');
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 function closePdfModal() {
@@ -956,7 +1165,7 @@ async function showClientDetail(clientId) {
                 <tr class="bg-white">
                     <td class="px-4 py-2 font-medium">${inv.invoice_number}${ksefBadge(inv)}</td>
                     <td class="px-4 py-2 text-gray-500">${formatDate(inv.issue_date)}</td>
-                    <td class="px-4 py-2">${formatCurrency(inv.amount, inv.currency)}</td>
+                    <td class="px-4 py-2">${amountHtml(inv)}</td>
                     <td class="px-4 py-2 text-green-600">${formatCurrency(inv.amount_paid || 0, inv.currency)}</td>
                     <td class="px-4 py-2 ${inv.amount_due > 0 ? 'text-red-600' : 'text-gray-400'}">${formatCurrency(inv.amount_due || 0, inv.currency)}</td>
                     <td class="px-4 py-2">
@@ -1006,6 +1215,7 @@ document.addEventListener('keydown', (e) => {
         closeClientModal();
         closePaymentModal();
         closeClientDetailModal();
+        closeKorektaModal();
     }
 });
 
