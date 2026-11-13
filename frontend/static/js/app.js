@@ -276,7 +276,8 @@ function ksefBadge(inv) {
 function amountHtml(inv) {
     if (inv.corrected_amount !== undefined && inv.corrected_amount !== null && inv.corrected_amount !== inv.amount) {
         const by = (inv.corrections || []).map(c => c.invoice_number).join(', ');
-        return `<span class="line-through text-gray-400 text-xs" title="Korrigiert durch ${by}">${formatCurrency(inv.amount, inv.currency)}</span> ${formatCurrency(inv.corrected_amount, inv.currency)}`;
+        const was = formatCurrency(inv.amount, inv.currency);
+        return `<span title="Korrigiert durch ${by} (vorher ${was})">${formatCurrency(inv.corrected_amount, inv.currency)}</span> <span class="line-through text-gray-400 text-xs">${was}</span>`;
     }
     return formatCurrency(inv.amount, inv.currency);
 }

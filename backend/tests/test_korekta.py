@@ -134,6 +134,15 @@ def k05_refusals():
     assert code(45, new_amount="14080", correction_type=3)[0] == 400
     assert code(999, new_amount="1")[0] == 404 and code(48, new_amount="1")[0] == 404, "missing / deleted original"
     assert code(45, new_amount="0") == 200, "a correction to zero is allowed"
+    # each layer refuses on its own: the planner (before anything is built) ...
+    assert "nothing to correct" in raises(cs.CorrectionRefused, cs.plan_correction, db, 45, "17600")
+    assert "cannot be negative" in raises(cs.CorrectionRefused, cs.plan_correction, db, 45, "-0.01")
+    # ... and the XML builder / filing preflight (for rows that bypass the planner)
+    blk = {"original_invoice_number": "01/11/2026", "original_issue_date": "04.11.2026", "original_ksef_reference": KSEF45, "type": 2}
+    assert "changes nothing" in ks.correction_problem({"amount": 0, "correction": {**blk, "amount_before": 10, "amount_after": 10}})
+    assert "negative" in ks.correction_problem({"amount": -11, "correction": {**blk, "amount_before": 10, "amount_after": -1}})
+    assert "does not equal" in ks.correction_problem({"amount": -5, "correction": {**blk, "amount_before": 10, "amount_after": 4}})
+    assert ks.correction_problem({"amount": -6, "correction": {**blk, "amount_before": 10, "amount_after": 4}}) is None
     # a correction cannot itself be corrected
     rinv.create_correction(45, rinv.CorrectionRequest(new_amount="14080", confirmed=True)); db._cache_invalidate()
     st, d = code(49, new_amount="1")
@@ -195,6 +204,8 @@ def k09_failed_filing_is_retried_and_broken_link_refused():
     db2.db_worksheet.rows[0] += ["Corrects File #", "Correction Reason", "Correction Type"]; db2._cache_invalidate()
     inv = db2.get_invoice(47)
     assert "not in the sheet" in inv["correction"]["error"]
+    assert "not in the sheet" in (ks._preflight(inv, KER) or ""), "preflight layer refuses on its own"
+    assert "not in the sheet" in raises(ValueError, ks.build_faktura, inv, KER), "XML builder layer refuses on its own"
     msg = raises(ks.KsefFilingError, ks.file_invoice_in_ksef, db2, inv, KER)
     assert "not in the sheet" in msg and not FILED, "a correction with a broken link is never sent"
     assert db2.db_worksheet.rows[2][13].startswith("BLAD"), db2.db_worksheet.rows[2][13]
