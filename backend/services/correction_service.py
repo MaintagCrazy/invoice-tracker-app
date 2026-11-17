@@ -82,8 +82,11 @@ def _money(value, field: str) -> Decimal:
         raise CorrectionRefused(f"{field} {value} is too large.", 400)
     if abs(q) >= Decimal("1e14"):
         raise CorrectionRefused(f"{field} {value} is too large.", 400)
-    if q != d:
-        raise CorrectionRefused(f"{field} {value} has more than 2 decimals.", 400)
+    if q != d or d.as_tuple().exponent < -2:
+        # "14.080" must never become 14.08: a dot or comma before exactly three digits is how
+        # Germans and Poles write thousands, so a third decimal place is refused, never rounded
+        hint = f" If you meant {int(d * 1000):,} write {int(d * 1000)}." if d.as_tuple().exponent == -3 and abs(d) < 1000 else ""
+        raise CorrectionRefused(f"{field} {value} has more than 2 decimals.{hint}", 400)
     return q
 
 
@@ -237,6 +240,10 @@ def preview_correction(db, original_id: int, new_amount, reason=None, correction
     warning = ("Confirming saves this correction and files it in KSeF with the Polish tax authority; "
                "a filing is legally binding and cannot be withdrawn. Before saving, the app reads the "
                "filed original from KSeF and refuses if seller, buyer, currency, line or payment differ.")
+    before, after = Decimal(str(s["amount_before"])), Decimal(str(s["amount_after"]))
+    if before > 0 and after < before / 2:
+        warning += (f" Check the amount: the value drops by more than half, from {s['currency']} {before:,.2f} "
+                    f"to {s['currency']} {after:,.2f}.")
     if s["refund_due"]:
         warning += f" Already paid {s['currency']} {s['amount_paid']:,.2f}: {s['currency']} {s['refund_due']:,.2f} will be owed back to the buyer."
     return {

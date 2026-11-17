@@ -485,6 +485,30 @@ def k24_delete_needs_ksef_lookup():
     assert rinv.delete_invoice(46)["success"] and db.db_worksheet.rows[2][9] == "deleted", "absent in KSeF: deleted"
 
 
+def k25_thousands_typo_is_refused_never_rounded():
+    """'14.080' written the German or Polish way must not become EUR 14.08."""
+    db = kdb([original()])
+    for amt, hint in (("14.080", "14080"), ("14080.000", None), ("1.5", None)):
+        try:
+            r = rinv.preview_correction(45, rinv.CorrectionRequest(new_amount=amt))
+            assert amt == "1.5", f"{amt} accepted as {r['amount_after']}"
+        except HTTPException as e:
+            assert amt != "1.5" and e.status_code == 400 and "more than 2 decimals" in e.detail, (amt, e.detail)
+            assert (hint in e.detail) if hint else ("If you meant" not in e.detail), e.detail
+    for amt in ("14080", "14080.00", "14080.5"):
+        assert rinv.preview_correction(45, rinv.CorrectionRequest(new_amount=amt))["xsd_valid"], amt
+    return "14.080 refused with hint 14080; 14080.000 refused; 14080 / 14080.00 / 14080.5 accepted"
+
+
+def k26_big_drop_is_flagged_small_is_not():
+    db = kdb([original()])
+    w = rinv.preview_correction(45, rinv.CorrectionRequest(new_amount="14080"))["warning"]
+    assert "drops by more than half" not in w, w
+    w = rinv.preview_correction(45, rinv.CorrectionRequest(new_amount="1408"))["warning"]
+    assert "drops by more than half" in w and "17,600.00" in w and "1,408.00" in w, w
+    return "14080: no flag; 1408: flagged"
+
+
 if __name__ == "__main__":
     failed = 0
     for n, f in sorted((n, f) for n, f in globals().items() if re.match(r"k\d\d_", n)):
